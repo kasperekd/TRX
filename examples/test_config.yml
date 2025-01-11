@@ -1,0 +1,47 @@
+system:
+  log_level: INFO
+  log_file: /var/log/my_program.log
+  max_threads: 4
+
+sdr:
+  - name: SDR_1
+    device_type: SoapySDR
+    device_address: 192.168.2.3
+    settings:
+      gain_mode: manual
+      gain: 30
+      rx:
+        frequency: 433.92 MHz
+        sample_rate: 2048 KSPS
+        bandwidth: 200 kHz
+      tx:
+        frequency: 434.12 MHz
+        sample_rate: 2048 KSPS
+        bandwidth: 200 kHz
+    buffer_size: 1024
+    multiplier: 16
+    data_source:
+      type: file
+      file_path: /path/to/file1.txt
+      repeat_count: 5
+
+  - name: SDR_2
+    device_type: UHD
+    device_address: 0
+    settings:
+      gain_mode: slow_attack
+      gain: 20
+      rx:
+        frequency: 435.00 MHz
+        sample_rate: 4096 KSPS
+        bandwidth: 400 kHz
+      tx:
+        frequency: 435.50 MHz
+        sample_rate: 4096 KSPS
+        bandwidth: 400 kHz
+    buffer_size: 2048
+    multiplier: 32
+    data_source:
+      type: file
+      file_path: /path/to/file2.txt
+      repeat_count: inf

@@ -2,11 +2,12 @@
 
 #include <iostream>
 
-SoapySDRDriver::SoapySDRDriver(const SDRConfig& cfg) : SDR(cfg) {}
+SoapySDRDriver::SoapySDRDriver(const SDRcfg::SDRConfig& cfg) : SDR(cfg) {}
 
 void SoapySDRDriver::initialize() {
-    std::cout << "Initializing SoapySDR with sample rate: " << config.sampleRate
-              << " Hz, frequency: " << config.frequency
+    std::cout << "Initializing SoapySDR with rxsample rate: "
+              << config.rxSampleRate
+              << " Hz, rxfrequency: " << config.rxFrequency
               << " Hz, and gain: " << config.gain << " dB." << std::endl;
 }
 

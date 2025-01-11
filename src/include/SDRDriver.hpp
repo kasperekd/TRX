@@ -7,11 +7,11 @@
 
 class SDR {
    public:
-    SDRConfig config;
+    SDRcfg::SDRConfig config;
     std::unique_ptr<int16_t[]> rxBuffer;
     std::unique_ptr<int16_t[]> txBuffer;
 
-    explicit SDR(const SDRConfig& cfg);
+    explicit SDR(const SDRcfg::SDRConfig& cfg);
     virtual void initialize() = 0;
     virtual void sendSamples() = 0;
     virtual void receiveSamples() = 0;

@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-SDR::SDR(const SDRConfig& cfg) : config(cfg) { allocateBuffers(); }
+SDR::SDR(const SDRcfg::SDRConfig& cfg) : config(cfg) { allocateBuffers(); }
 
 void SDR::allocateBuffers() {
     size_t totalSize = config.bufferSize * 2;  // I и Q
