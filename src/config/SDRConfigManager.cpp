@@ -11,25 +11,25 @@ void SDRConfigManager::loadFromNode(const fkyaml::node& sdrNode) {
         if (!node["name"].is_null()) {
             sdr.name = node["name"].get_value<std::string>();
         } else {
-            sdr.name = "Unknown_SDR";  // Значение по умолчанию
+            sdr.name = "Unknown_SDR";
         }
 
         if (!node["device_address"].is_null()) {
             sdr.deviceAddress = node["device_address"].get_value<std::string>();
         } else {
-            sdr.deviceAddress = "";  // Значение по умолчанию
+            sdr.deviceAddress = "";
         }
 
         if (!node["buffer_size"].is_null()) {
             sdr.bufferSize = node["buffer_size"].get_value<size_t>();
         } else {
-            sdr.bufferSize = 0;  // Значение по умолчанию
+            sdr.bufferSize = 0;
         }
 
         if (!node["multiplier"].is_null()) {
             sdr.multiplier = node["multiplier"].get_value<size_t>();
         } else {
-            sdr.multiplier = 1;  // Значение по умолчанию
+            sdr.multiplier = 1;
         }
 
         // Обработка типа устройства

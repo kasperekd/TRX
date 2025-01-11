@@ -8,19 +8,19 @@ void SystemConfig::loadFromNode(const fkyaml::node& systemNode) {
     if (!systemNode["log_level"].is_null()) {
         logLevel = systemNode["log_level"].get_value<std::string>();
     } else {
-        logLevel = "INFO";  // Значение по умолчанию
+        logLevel = "INFO";
     }
 
     if (!systemNode["log_file"].is_null()) {
         logFile = systemNode["log_file"].get_value<std::string>();
     } else {
-        logFile = "";  // Значение по умолчанию
+        logFile = "";
     }
 
     if (!systemNode["max_threads"].is_null()) {
         maxThreads = systemNode["max_threads"].get_value<size_t>();
     } else {
-        maxThreads = 1;  // Значение по умолчанию
+        maxThreads = 1;
     }
 }
 
