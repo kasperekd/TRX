@@ -4,24 +4,19 @@
 int main() {
     // std::ifstream ifs("/home/kasperekd/code/TRX/examples/test_config.yml");
     try {
-        // Создаем экземпляр конфигурации
         Config config;
 
-        // Путь к YAML-файлу
         std::string configPath =
             "/home/kasperekd/code/TRX/examples/test_config.yml";
 
-        // Загружаем конфигурацию
         config.loadFromFile(configPath);
 
-        // Получаем и отображаем системные настройки
         const auto& systemConfig = config.getSystemConfig();
         std::cout << "System Configuration:" << std::endl;
         std::cout << "  Log Level: " << systemConfig.logLevel << std::endl;
         std::cout << "  Log File: " << systemConfig.logFile << std::endl;
         std::cout << "  Max Threads: " << systemConfig.maxThreads << std::endl;
 
-        // Получаем и отображаем настройки SDR
         const auto& sdrConfigs = config.getSDRConfigs();
         std::cout << "\nSDR Configurations:" << std::endl;
 
@@ -36,22 +31,20 @@ int main() {
             std::cout << "  Buffer Size: " << sdr.bufferSize << std::endl;
             std::cout << "  Multiplier: " << sdr.multiplier << std::endl;
 
-            // Параметры приемника
             std::cout << "  RX Settings:" << std::endl;
-            std::cout << "    Frequency: " << sdr.rxFrequency << " MHz"
+            std::cout << "    Frequency: " << sdr.rxFrequency << ""
                       << std::endl;
-            std::cout << "    Sample Rate: " << sdr.rxSampleRate << " KSPS"
+            std::cout << "    Sample Rate: " << sdr.rxSampleRate << ""
                       << std::endl;
-            std::cout << "    Bandwidth: " << sdr.rxBandwidth << " kHz"
+            std::cout << "    Bandwidth: " << sdr.rxBandwidth << ""
                       << std::endl;
 
-            // Параметры передатчика
             std::cout << "  TX Settings:" << std::endl;
-            std::cout << "    Frequency: " << sdr.txFrequency << " MHz"
+            std::cout << "    Frequency: " << sdr.txFrequency << ""
                       << std::endl;
-            std::cout << "    Sample Rate: " << sdr.txSampleRate << " KSPS"
+            std::cout << "    Sample Rate: " << sdr.txSampleRate << ""
                       << std::endl;
-            std::cout << "    Bandwidth: " << sdr.txBandwidth << " kHz"
+            std::cout << "    Bandwidth: " << sdr.txBandwidth << ""
                       << std::endl;
 
             std::cout << "-----------------------" << std::endl;

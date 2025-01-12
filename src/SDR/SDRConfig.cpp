@@ -1,25 +1,7 @@
 #include "SDRConfig.hpp"
 
-SDRcfg::SDRConfig::SDRConfig(SDRDeviceType type, const std::string& name,
-                             const std::string& address, double rxFreq,
-                             double rxRate, double rxBW, double txFreq,
-                             double txRate, double txBW, double g,
-                             size_t bufSize, size_t mult)
-    : deviceType(type),
-      name(name),
-      deviceAddress(address),
-      rxFrequency(rxFreq),
-      rxSampleRate(rxRate),
-      rxBandwidth(rxBW),
-      txFrequency(txFreq),
-      txSampleRate(txRate),
-      txBandwidth(txBW),
-      gain(g),
-      bufferSize(bufSize),
-      multiplier(mult) {}
-
 SDRcfg::SDRConfig::SDRConfig()
-    : deviceType(SDRDeviceType::Unknown),
+    : deviceType(SDRDeviceType::UnknownType),
       name(""),
       deviceAddress(""),
       rxFrequency(0.0),
@@ -31,6 +13,30 @@ SDRcfg::SDRConfig::SDRConfig()
       gain(0.0),
       bufferSize(0),
       multiplier(1) {}
+
+SDRcfg::SDRConfig::SDRConfig(SDRDeviceType type, const std::string& name,
+                             const std::string& address, double rxFreq,
+                             double rxRate, double rxBW, double txFreq,
+                             double txRate, double txBW, double g,
+                             GainMode mode, size_t bufSize, size_t mult,
+                             DataSourceType srcType, const std::string& srcPath,
+                             size_t repeat)
+    : deviceType(type),
+      name(name),
+      deviceAddress(address),
+      rxFrequency(rxFreq),
+      rxSampleRate(rxRate),
+      rxBandwidth(rxBW),
+      txFrequency(txFreq),
+      txSampleRate(txRate),
+      txBandwidth(txBW),
+      gain(g),
+      gainMode(mode),
+      bufferSize(bufSize),
+      multiplier(mult),
+      dataSourceType(srcType),
+      dataSourcePath(srcPath),
+      repeatCount(repeat) {}
 
 SDRcfg::SDRConfig::SDRConfig(const SDRConfig& other)
     : deviceType(other.deviceType),

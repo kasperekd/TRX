@@ -12,11 +12,11 @@ sdr:
       gain: 30
       rx:
         frequency: 433.92 MHz
-        sample_rate: 2048 KSPS
+        sample_rate: 2048 kSPS
         bandwidth: 200 kHz
       tx:
         frequency: 434.12 MHz
-        sample_rate: 2048 KSPS
+        sample_rate: 2048 kSPS
         bandwidth: 200 kHz
     buffer_size: 1024
     multiplier: 16
@@ -27,17 +27,17 @@ sdr:
 
   - name: SDR_2
     device_type: UHD
-    device_address: 0
+    device_address: /usb/tty/path
     settings:
       gain_mode: slow_attack
       gain: 20
       rx:
         frequency: 435.00 MHz
-        sample_rate: 4096 KSPS
+        sample_rate: 4096 kSPS
         bandwidth: 400 kHz
       tx:
         frequency: 435.50 MHz
-        sample_rate: 4096 KSPS
+        sample_rate: 4096 kSPS
         bandwidth: 400 kHz
     buffer_size: 2048
     multiplier: 32
