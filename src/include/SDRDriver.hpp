@@ -8,6 +8,8 @@
 class SDR {
    public:
     SDRcfg::SDRConfig config;
+    // TODO: Нужно использовать кольцевые буферы без блокировок который работает
+    // на основе атомарных индексов.
     std::unique_ptr<int16_t[]> rxBuffer;
     std::unique_ptr<int16_t[]> txBuffer;
 
