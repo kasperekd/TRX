@@ -18,6 +18,36 @@
 // TODO: Добавить возможность ожидать выполнение конкретной задачи и/или группы
 // задач
 
+// TODO: Добавить выбор поведения при TaskCount > ThreadCount:
+// 1. Выполняются по очереди
+// 2. "равномерное" выполнение с постоянныи переключением контекста
+
+// FIXME: При некоторых конфигурациях не завершаются воркеры (TaskCount <
+// ThreadCount) :
+/*
+const size_t numThreads = 20;
+    const size_t numTasks = 10;
+    const int computationLimit = 10000000;
+    const int computationLimit2 = 10000001;
+
+    ThreadManager threadManager(numThreads);
+
+    auto start = std::chrono::high_resolution_clock::now();
+
+    for (size_t i = 0; i < numTasks; ++i) {
+        threadManager.addTask(
+            [i, computationLimit]() { heavyTask(i, computationLimit); },
+            ThreadManager::TaskPriority::Low);
+    }
+    for (size_t i = 0; i < 2; ++i) {
+        threadManager.addTask(
+            [i, computationLimit2]() { heavyTask(i, computationLimit2); });
+    }
+
+    threadManager.waitForAll();
+    threadManager.stopAll();
+*/
+
 class ThreadManager {
    public:
     using Task = std::function<void()>;

@@ -21,14 +21,14 @@ void heavyTask(size_t id, int limit) {
     }
     std::cout << "Task " << id << " finished, primes counted: " << limit
               << "\n";
-    return;
+    // return;
 }
 
 int main() {
-    const size_t numThreads = 2;
-    const size_t numTasks = 10;
-    const int computationLimit = 100000;
-    const int computationLimit2 = 100001;
+    const size_t numThreads = 1;
+    const size_t numTasks = 100;
+    const int computationLimit = 1000000000;
+    // const int computationLimit2 = 10000001;
 
     ThreadManager threadManager(numThreads);
 
@@ -39,10 +39,10 @@ int main() {
             [i, computationLimit]() { heavyTask(i, computationLimit); },
             ThreadManager::TaskPriority::Low);
     }
-    for (size_t i = 0; i < 2; ++i) {
-        threadManager.addTask(
-            [i, computationLimit2]() { heavyTask(i, computationLimit2); });
-    }
+    // for (size_t i = 0; i < 2; ++i) {
+    //     threadManager.addTask(
+    //         [i, computationLimit2]() { heavyTask(i, computationLimit2); });
+    // }
 
     threadManager.waitForAll();
     threadManager.stopAll();
