@@ -23,7 +23,7 @@ data = np.fromfile(filename, dtype=np.int16).astype(np.float32)
 I_ = data[::2]
 Q_ = data[1::2] 
 
-threshold = 9  # Например, 0.01
+threshold = 9 
 
 # mask = (np.abs(I_) > threshold) & (np.abs(Q_) > threshold)
 # I = I_[mask]
@@ -60,17 +60,14 @@ sync_I = []
 sync_Q = []
 
 for i in range(0, len(filtered_I) - Nsps, Nsps):
-    # Текущее смещение
     current_tau = tau
     idx_start = i + current_tau
     idx_end = idx_start + Nsps
     idx_mid = idx_start + Nsps//2
     
-    # Проверка выхода за границы массива
     if idx_end >= len(filtered_I) or idx_start < 0:
         break
-    
-    # Вычисление ошибки
+
     I_end = filtered_I[idx_end]
     I_start = filtered_I[idx_start]
     I_mid = filtered_I[idx_mid]
