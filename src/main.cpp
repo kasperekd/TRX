@@ -26,7 +26,7 @@ size_t heavyTask(size_t id, int limit) {
 
 int main() {
     const size_t numThreads = 20;
-    const size_t numTasks = 50;
+    const size_t numTasks = 5000;
     const int computationLimit = 1000000;
     ThreadManager threadManager(numThreads);
     auto start = std::chrono::high_resolution_clock::now();

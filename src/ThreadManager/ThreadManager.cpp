@@ -2,13 +2,13 @@
 
 ThreadManager::ThreadManager(size_t maxThreads, bool roundRobin)
     : running(true),
-      maxThreads(maxThreads),
-      groupRunning(std::bitset<MAX_THREAD_GROUP>().set()),
       tasksInQueue(0),
       activeThreads(0),
       busyWorkers(0),
-      roundRobin(roundRobin),
-      nextTaskID(1) {
+      nextTaskID(1),
+      groupRunning(std::bitset<MAX_THREAD_GROUP>().set()),
+      maxThreads(maxThreads),
+      roundRobin(roundRobin) {
     LOG("ThreadManager started with max " << maxThreads << " threads");
 }
 

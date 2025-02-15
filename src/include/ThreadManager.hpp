@@ -15,7 +15,7 @@
 #include <unordered_map>
 #include <vector>
 
-#define DEBUG
+// #define DEBUG
 #ifdef DEBUG
 #define LOG(msg) std::cout << msg << std::endl
 #else
