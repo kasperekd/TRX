@@ -14,15 +14,15 @@ def plot_eye_diagram(signal, sps, num_traces=100):
             break
         plt.plot(range(2 * sps), signal[start_idx:start_idx + 2 * sps].real, color='blue', alpha=0.5)
 
-def timing_recovery(IQ, alg, Nsps, n1st):
+def timing_recovery(IQ, alg, Nsps, n1st, DF):
     N = len(IQ)
     I = np.real(IQ)
     Q = np.imag(IQ)
 
     damp = np.sqrt(2) / 2
     band = (0.5 * np.pi / 500) / (damp + 1/(4*damp))
-    mi1 = (4 * damp * band) / ((1 + 2*damp*band + band**2) * 2.7)
-    mi2 = (4 * band**2) / ((1 + 2*damp*band + band**2) * 2.7)
+    mi1 = (4 * damp * band) / ((1 + 2*damp*band + band**2) * DF)
+    mi2 = (4 * band**2) / ((1 + 2*damp*band + band**2) * DF)
     
     err = []
     offset = []
@@ -67,12 +67,16 @@ def timing_recovery(IQ, alg, Nsps, n1st):
     
     return ns, IQs, np.array(err), np.array(offset)
 
-filename = '../../data/qpsk_signal_no_phase.bin'
+# filename = '/home/kasperekd/TRX/data/qpsk_signal.bin'
+filename = '/home/kasperekd/TRX/data/new/txdata2.pcm'
+# filename = '../../data/qpsk_signal_no_phase.bin'
 # filename = '../../data/qpsk_signal_noise.bin'
 data = np.fromfile(filename, dtype=np.int16).astype(np.float32)
 
-start_sample = 441 * 2
-end_sample = 1320 * 2
+start_sample = 0 * 2
+end_sample = 99999 * 2
+# start_sample = 25200 * 2
+# end_sample = 25700 * 2
 
 selected_data = data[start_sample:end_sample]
 
@@ -95,7 +99,7 @@ alg = 3
 Nsps = 10
 n1st = 1
 
-ns, IQs, err, offset = timing_recovery(IQ_filtered, alg, Nsps, n1st)
+ns, IQs, err, offset = timing_recovery(IQ_filtered, alg, Nsps, n1st, 6)
 
 plt.figure(figsize=(15, 20))
 
@@ -152,6 +156,6 @@ if len(offset) > 0:
 
 plt.tight_layout()
 
-plot_eye_diagram(IQs,1,100)
+# plot_eye_diagram(IQs,1,100)
 
 plt.show()
