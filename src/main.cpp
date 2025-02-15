@@ -1,8 +1,8 @@
 #include "Common.hpp"
 // #include "fkYAML/node.hpp"
-
 #include <chrono>
 #include <cmath>
+#include <iostream>
 
 #include "ThreadManager.hpp"
 
@@ -14,43 +14,43 @@ bool isPrime(int number) {
     return true;
 }
 
-void heavyTask(size_t id, int limit) {
+size_t heavyTask(size_t id, int limit) {
     int count = 0;
     for (int i = 2; i < limit; ++i) {
         if (isPrime(i)) ++count;
     }
     std::cout << "Task " << id << " finished, primes counted: " << limit
               << "\n";
-    // return;
+    return count;
 }
 
 int main() {
-    const size_t numThreads = 1;
-    const size_t numTasks = 100;
-    const int computationLimit = 1000000000;
-    // const int computationLimit2 = 10000001;
-
+    const size_t numThreads = 20;
+    const size_t numTasks = 1;
+    const int computationLimit = 10000000;
     ThreadManager threadManager(numThreads);
-
     auto start = std::chrono::high_resolution_clock::now();
 
+    std::vector<std::future<size_t>> futures;
     for (size_t i = 0; i < numTasks; ++i) {
-        threadManager.addTask(
-            [i, computationLimit]() { heavyTask(i, computationLimit); },
+        auto future = threadManager.addTask(
+            [i, computationLimit]() { return heavyTask(i, computationLimit); },
             ThreadManager::TaskPriority::Low);
+        futures.push_back(std::move(future));
     }
-    // for (size_t i = 0; i < 2; ++i) {
-    //     threadManager.addTask(
-    //         [i, computationLimit2]() { heavyTask(i, computationLimit2); });
-    // }
 
     threadManager.waitForAll();
     threadManager.stopAll();
 
+    size_t totalPrimes = 0;
+    for (auto& future : futures) {
+        totalPrimes += future.get();
+    }
+
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> duration = end - start;
-
     std::cout << "Total execution time: " << duration.count() << " seconds\n";
+    std::cout << "Total primes counted: " << totalPrimes << "\n";
 
     return 0;
 
