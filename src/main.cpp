@@ -26,32 +26,30 @@ size_t heavyTask(size_t id, int limit) {
 
 int main() {
     const size_t numThreads = 20;
-    const size_t numTasks = 1;
+    const size_t numTasks = 200;
     const int computationLimit = 10000000;
     ThreadManager threadManager(numThreads);
     auto start = std::chrono::high_resolution_clock::now();
-
-    std::vector<std::future<size_t>> futures;
+    std::vector<size_t> taskIDs;
     for (size_t i = 0; i < numTasks; ++i) {
-        auto future = threadManager.addTask(
+        auto taskID = threadManager.addTask(
             [i, computationLimit]() { return heavyTask(i, computationLimit); },
             ThreadManager::TaskPriority::Low);
-        futures.push_back(std::move(future));
+        taskIDs.push_back(taskID);
     }
 
-    threadManager.waitForAll();
+    auto results = threadManager.waitForAll();
     threadManager.stopAll();
 
     size_t totalPrimes = 0;
-    for (auto& future : futures) {
-        totalPrimes += future.get();
+    for (const auto& [taskID, result] : results) {
+        totalPrimes += result;
     }
 
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> duration = end - start;
     std::cout << "Total execution time: " << duration.count() << " seconds\n";
     std::cout << "Total primes counted: " << totalPrimes << "\n";
-
     return 0;
 
     // std::ifstream ifs("/home/kasperekd/code/TRX/examples/test_config.yml");

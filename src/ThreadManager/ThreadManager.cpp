@@ -6,7 +6,8 @@ ThreadManager::ThreadManager(size_t maxThreads, bool roundRobin)
       groupRunning(std::bitset<MAX_THREAD_GROUP>().set()),
       tasks_in_queue(0),
       active_threads(0),
-      roundRobin(roundRobin) {
+      roundRobin(roundRobin),
+      nextTaskID(1) {
     std::cout << "ThreadManager started with max " << maxThreads
               << " threads\n";
 }
@@ -33,7 +34,6 @@ void ThreadManager::stopGroup(size_t groupID) {
         std::cerr << "Invalid group ID: " << groupID << std::endl;
         return;
     }
-
     std::bitset<MAX_THREAD_GROUP> expected = groupRunning.load();
     std::bitset<MAX_THREAD_GROUP> desired = expected;
     desired.reset(groupID);  // Сбрасываем нужный бит
@@ -41,7 +41,6 @@ void ThreadManager::stopGroup(size_t groupID) {
         desired = expected;
         desired.reset(groupID);
     }
-
     {
         std::lock_guard<std::mutex> lock(queueMutex);
         std::priority_queue<TaskEntry, std::vector<TaskEntry>,
@@ -101,7 +100,7 @@ void ThreadManager::workerThread() {
             taskEntry = taskQueue.top();
             taskQueue.pop();
             tasks_in_queue--;
-            active_threads--;
+            // active_threads--;
             std::cout << "Task taken from queue, tasks_in_queue: "
                       << tasks_in_queue.load()
                       << ", active_threads: " << active_threads.load() << "\n";
@@ -118,18 +117,37 @@ void ThreadManager::workerThread() {
         }
         {
             std::lock_guard<std::mutex> lock(queueMutex);
+            active_threads--;
             if (active_threads + tasks_in_queue == 0) {
-                cv.notify_one();  // все задачи выполнены
+                cv.notify_one();  // Все задачи выполнены
                 std::cout << "All tasks completed\n";
             }
         }
     }
 }
 
-void ThreadManager::waitForAll() {
+std::unordered_map<size_t, size_t> ThreadManager::waitForAll() {
     std::unique_lock<std::mutex> lock(queueMutex);
-    cv.wait(lock, [this]() { return active_threads + tasks_in_queue == 0; });
+    cv.wait(lock, [this]() {
+        return active_threads.load() + tasks_in_queue.load() == 0;
+    });
     std::cout << "waitForAll completed\n";
+
+    std::unordered_map<size_t, size_t> results;
+    for (auto& [taskID, future] : taskResults) {
+        results[taskID] = future.get();
+    }
+    taskResults.clear();
+    return results;
+}
+
+void ThreadManager::waitForTask(size_t taskID) {
+    if (taskResults.find(taskID) == taskResults.end()) {
+        std::cerr << "Task ID " << taskID << " not found\n";
+        return;
+    }
+    taskResults[taskID].wait();
+    std::cout << "Task " << taskID << " completed\n";
 }
 
 void ThreadManager::startWorkerIfNecessary() {
@@ -141,3 +159,6 @@ void ThreadManager::startWorkerIfNecessary() {
                   << active_threads.load() << "\n";
     }
 }
+
+size_t ThreadManager::getActive_threads() { return active_threads.load(); }
+size_t ThreadManager::getTasks_in_queue() { return tasks_in_queue.load(); }
