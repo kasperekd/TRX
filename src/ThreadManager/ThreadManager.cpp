@@ -4,15 +4,15 @@ ThreadManager::ThreadManager(size_t maxThreads, bool roundRobin)
     : running(true),
       maxThreads(maxThreads),
       groupRunning(std::bitset<MAX_THREAD_GROUP>().set()),
-      tasks_in_queue(0),
-      active_threads(0),
+      tasksInQueue(0),
+      activeThreads(0),
+      busyWorkers(0),
       roundRobin(roundRobin),
       nextTaskID(1) {
-    std::cout << "ThreadManager started with max " << maxThreads
-              << " threads\n";
+    LOG("ThreadManager started with max " << maxThreads << " threads");
 }
 
-ThreadManager::~ThreadManager() { stopAll(); }
+ThreadManager::ThreadManager() { stopAll(); }
 
 void ThreadManager::stopAll() {
     {
@@ -26,12 +26,12 @@ void ThreadManager::stopAll() {
         }
     }
     threads.clear();
-    std::cout << "ThreadManager stopped\n";
+    LOG("ThreadManager stopped");
 }
 
 void ThreadManager::stopGroup(size_t groupID) {
     if (groupID >= MAX_THREAD_GROUP) {
-        std::cerr << "Invalid group ID: " << groupID << std::endl;
+        ERROR("Invalid group ID: " << groupID);
         return;
     }
     std::bitset<MAX_THREAD_GROUP> expected = groupRunning.load();
@@ -55,7 +55,7 @@ void ThreadManager::stopGroup(size_t groupID) {
         }
         taskQueue = std::move(newQueue);
     }
-    std::cout << "Group " << groupID << " stopped\n";
+    LOG("Group " << groupID << " stopped");
 }
 
 void ThreadManager::resizeThreadPool(size_t newSize) {
@@ -73,15 +73,15 @@ void ThreadManager::resizeThreadPool(size_t newSize) {
             threads.pop_back();
         }
         maxThreads = newSize;
-        {
-            std::lock_guard<std::mutex> lock(queueMutex);
-            running.store(true);
-            cv.notify_all();  // Уведомляем новые потоки о начале работы
-        }
     } else {
         maxThreads = newSize;
     }
-    std::cout << "Thread pool resized to " << maxThreads << " threads\n";
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        running.store(true);
+        cv.notify_all();  // Уведомляем новые потоки о начале работы
+    }
+    LOG("Thread pool resized to " << maxThreads << " threads");
 }
 
 void ThreadManager::workerThread() {
@@ -90,37 +90,40 @@ void ThreadManager::workerThread() {
         {
             std::unique_lock<std::mutex> lock(queueMutex);
             cv.wait(lock,
-                    [this]() { return !taskQueue.empty() || !running.load(); });
+                    [this] { return !taskQueue.empty() || !running.load(); });
             if (!running.load() && taskQueue.empty()) {
-                std::cout << "Worker thread exiting\n";
-                active_threads--;
+                LOG("Worker thread exiting");
+                activeThreads--;
                 return;  // Завершаем работу, если нет задач и флаг running
                          // установлен в false
             }
             taskEntry = taskQueue.top();
             taskQueue.pop();
-            tasks_in_queue--;
-            // active_threads--;
-            std::cout << "Task taken from queue, tasks_in_queue: "
-                      << tasks_in_queue.load()
-                      << ", active_threads: " << active_threads.load() << "\n";
+            tasksInQueue--;
+            busyWorkers++;
+            LOG("Task taken from queue, tasks_in_queue: "
+                << tasksInQueue.load()
+                << ", busy_workers: " << busyWorkers.load());
         }
         if (!groupRunning.load()[taskEntry.groupID]) {
-            std::cout << "Skipping task from group " << taskEntry.groupID
-                      << "\n";
+            LOG("Skipping task from group " << taskEntry.groupID);
+            {
+                std::lock_guard<std::mutex> lock(queueMutex);
+                busyWorkers--;
+            }
             continue;  // Пропускаем задачи из остановленных групп
         }
         try {
             (*taskEntry.task)();
         } catch (const std::exception& e) {
-            std::cerr << "Task error: " << e.what() << "\n";
+            ERROR("Task error: " << e.what());
         }
         {
             std::lock_guard<std::mutex> lock(queueMutex);
-            active_threads--;
-            if (active_threads + tasks_in_queue == 0) {
+            busyWorkers--;
+            if (busyWorkers.load() + tasksInQueue.load() == 0) {
                 cv.notify_one();  // Все задачи выполнены
-                std::cout << "All tasks completed\n";
+                LOG("All tasks completed");
             }
         }
     }
@@ -128,11 +131,9 @@ void ThreadManager::workerThread() {
 
 std::unordered_map<size_t, size_t> ThreadManager::waitForAll() {
     std::unique_lock<std::mutex> lock(queueMutex);
-    cv.wait(lock, [this]() {
-        return active_threads.load() + tasks_in_queue.load() == 0;
-    });
-    std::cout << "waitForAll completed\n";
-
+    cv.wait(lock,
+            [this] { return (busyWorkers.load() + tasksInQueue.load()) == 0; });
+    LOG("waitForAll completed");
     std::unordered_map<size_t, size_t> results;
     for (auto& [taskID, future] : taskResults) {
         results[taskID] = future.get();
@@ -141,24 +142,35 @@ std::unordered_map<size_t, size_t> ThreadManager::waitForAll() {
     return results;
 }
 
-void ThreadManager::waitForTask(size_t taskID) {
-    if (taskResults.find(taskID) == taskResults.end()) {
-        std::cerr << "Task ID " << taskID << " not found\n";
-        return;
+size_t ThreadManager::waitForTask(size_t taskID) {
+    std::future<size_t> future;
+    {
+        std::lock_guard<std::mutex> lock(resultMutex);
+        if (taskResults.find(taskID) == taskResults.end()) {
+            ERROR("Task ID " << taskID << " not found");
+            return 0;
+        }
+        future = std::move(taskResults[taskID]);
+        taskResults.erase(taskID);
     }
-    taskResults[taskID].wait();
-    std::cout << "Task " << taskID << " completed\n";
+    future.wait();
+    LOG("Task " << taskID
+                << " completed tasks_in_queue: " << tasksInQueue.load()
+                << ", active_threads: " << activeThreads.load()
+                << ", BusyWorkers: " << getBusyWorkers());
+    return future.get();
 }
 
 void ThreadManager::startWorkerIfNecessary() {
     std::lock_guard<std::mutex> lock(queueMutex);
-    if (active_threads.load() < maxThreads && tasks_in_queue.load() > 0) {
+    if (activeThreads.load() < maxThreads && tasksInQueue.load() > 0) {
         threads.emplace_back(&ThreadManager::workerThread, this);
-        active_threads++;
-        std::cout << "Started new worker thread, active_threads: "
-                  << active_threads.load() << "\n";
+        activeThreads++;
+        LOG("Started new worker thread, active_threads: "
+            << activeThreads.load());
     }
 }
 
-size_t ThreadManager::getActive_threads() { return active_threads.load(); }
-size_t ThreadManager::getTasks_in_queue() { return tasks_in_queue.load(); }
+size_t ThreadManager::getActiveThreads() { return activeThreads.load(); }
+size_t ThreadManager::getTasksInQueue() { return tasksInQueue.load(); }
+size_t ThreadManager::getBusyWorkers() { return busyWorkers.load(); }
