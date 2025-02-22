@@ -8,9 +8,12 @@
 #include "RingBuffer.hpp"
 #include "SDRDriver.hpp"
 
+// TODO: Добавить возможность изициализировать тоько один стрим не трогая другой
+// совсем
 class SoapySDRDriver : public SDR {
    public:
     explicit SoapySDRDriver(const SDRcfg::SDRConfig& cfg);
+    ~SoapySDRDriver();
     void initialize() override;
     void sendSamples() override;
     void receiveSamples() override;
@@ -19,13 +22,11 @@ class SoapySDRDriver : public SDR {
     RingBuffer<int16_t>& getTxBuffer() { return txBuffer; }
 
    private:
-    SoapySDR::Device* device;      // Указатель на устройство SoapySDR
-    SoapySDR::Stream* rxStream;    // Поток RX
-    SoapySDR::Stream* txStream;    // Поток TX
-    size_t rxMTU;                  // Размер MTU для RX
-    size_t txMTU;                  // Размер MTU для TX
-    RingBuffer<int16_t> rxBuffer;  // Кольцевой буфер для RX
-    RingBuffer<int16_t> txBuffer;  // Кольцевой буфер для TX
+    SoapySDR::Device* device;    // Указатель на устройство SoapySDR
+    SoapySDR::Stream* rxStream;  // Поток RX
+    SoapySDR::Stream* txStream;  // Поток TX
+    size_t rxMTU;                // Размер MTU для RX
+    size_t txMTU;                // Размер MTU для TX
 };
 
-#endif
+#endif  // SOAPYSDRDRIVER_HPP

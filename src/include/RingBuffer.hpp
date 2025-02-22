@@ -1,7 +1,11 @@
+#ifndef RINGBUFFER_HPP
+#define RINGBUFFER_HPP
+
 #include <atomic>
 #include <stdexcept>
 #include <vector>
 
+// FIXME: Обязательно убрать использование vector !
 template <typename T>
 class RingBuffer {
    public:
@@ -42,3 +46,5 @@ class RingBuffer {
     std::atomic<size_t> size_;
     size_t capacity_;
 };
+
+#endif  // RINGBUFFER_HPP

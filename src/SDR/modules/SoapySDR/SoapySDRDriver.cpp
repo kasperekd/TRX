@@ -9,73 +9,105 @@ SoapySDRDriver::SoapySDRDriver(const SDRcfg::SDRConfig& cfg)
       rxStream(nullptr),
       txStream(nullptr),
       rxMTU(0),
-      txMTU(0),
-      rxBuffer(cfg.bufferSize * 2),
-      txBuffer(cfg.bufferSize * 2) {
+      txMTU(0) {
     try {
-        // Поиск устройства SoapySDR
-        auto devices = SoapySDR::Device::enumerate();
+        std::cout << "Scanning for available SDR devices..." << std::endl;
+        std::vector<SoapySDR::Kwargs> devices = SoapySDR::Device::enumerate();
+
         if (devices.empty()) {
-            throw std::runtime_error("No SoapySDR devices found.");
+            std::cerr << "No SoapySDR devices found!" << std::endl;
+        } else {
+            std::cout << "Available SDR devices:" << std::endl;
+            for (size_t i = 0; i < devices.size(); i++) {
+                std::cout << "Device " << i + 1 << ":" << std::endl;
+                for (const auto& [key, value] : devices[i]) {
+                    std::cout << "  " << key << ": " << value << std::endl;
+                }
+            }
         }
 
-        // Выбор устройства по имени или адресу
-        // for (const auto& devInfo : devices) {
-        //     if (devInfo.at("label") == config.name ||
-        //         devInfo.at("serial") == config.deviceAddress) {
-        //         device = SoapySDR::Device::make(devInfo);
-        //         break;
-        //     }
-        // }
-        SoapySDRKwargs args = {};
-        SoapySDRKwargs_set(&args, "uri", "usb:");
-        SoapySDRKwargs_set(&args, "direct", "1");
+        SoapySDR::Kwargs args;
+        args["driver"] = "plutosdr";
+        args["remote"] = config.deviceAddress;
 
+        device = SoapySDR::Device::make(args);
         if (!device) {
-            throw std::runtime_error(
-                "Failed to find SoapySDR device with name: " + config.name +
-                " or address: " + config.deviceAddress);
+            throw std::runtime_error("Failed to create SoapySDR device.");
         }
 
-        std::cout << "SoapySDR device initialized." << std::endl;
+        std::cout << "SoapySDR device successfully created." << std::endl;
     } catch (const std::exception& e) {
-        throw std::runtime_error("Error initializing SoapySDR: " +
+        throw std::runtime_error("Error creating SoapySDR device: " +
                                  std::string(e.what()));
     }
 }
 
-void SoapySDRDriver::initialize() {
+SoapySDRDriver::~SoapySDRDriver() {
     try {
-        device->setFrequency(SOAPY_SDR_RX, 0, config.rxFrequency);
+        if (device) {
+            std::cout << "Releasing SoapySDR resources..." << std::endl;
+
+            if (rxStream) {
+                device->deactivateStream(rxStream);
+                device->closeStream(rxStream);
+                rxStream = nullptr;
+            }
+
+            if (txStream) {
+                device->deactivateStream(txStream);
+                device->closeStream(txStream);
+                txStream = nullptr;
+            }
+
+            SoapySDR::Device::unmake(device);
+            device = nullptr;
+
+            std::cout << "SoapySDR resources released successfully."
+                      << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error in SoapySDRDriver destructor: " << e.what()
+                  << std::endl;
+    }
+}
+
+void SoapySDRDriver::initialize() {
+    if (!device) {
+        throw std::runtime_error("Device is not initialized.");
+    }
+
+    try {
+        // FIXME: Задавать Buffer Size, MTU Size
+        // device->writeSetting("buffer_size",
+        // std::to_string(config.bufferSize));
 
         device->setSampleRate(SOAPY_SDR_RX, 0, config.rxSampleRate);
-
+        device->setFrequency(SOAPY_SDR_RX, 0, config.rxFrequency);
         device->setBandwidth(SOAPY_SDR_RX, 0, config.rxBandwidth);
-
         device->setGain(SOAPY_SDR_RX, 0, config.gain);
-
-        if (config.gainMode != SDRcfg::Manual) {
-            device->setGainMode(SOAPY_SDR_RX, 0, true);  // AGC
-        } else {
-            device->setGainMode(SOAPY_SDR_RX, 0, false);
-        }
-
-        device->setFrequency(SOAPY_SDR_TX, 0, config.txFrequency);
+        // device->setStreamMTU(SOAPY_SDR_RX, 0, 4096);
 
         device->setSampleRate(SOAPY_SDR_TX, 0, config.txSampleRate);
-
+        device->setFrequency(SOAPY_SDR_TX, 0, config.txFrequency);
         device->setBandwidth(SOAPY_SDR_TX, 0, config.txBandwidth);
+        device->setGain(SOAPY_SDR_TX, 0, config.gain);
 
-        rxStream = device->setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16);
-        txStream = device->setupStream(SOAPY_SDR_TX, SOAPY_SDR_CS16);
+        // FIXME: Нужен CF32 ?
+        rxStream = device->setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32);
+        if (!rxStream) throw std::runtime_error("Failed to create RX stream.");
+
+        txStream = device->setupStream(SOAPY_SDR_TX, SOAPY_SDR_CF32);
+        if (!txStream) throw std::runtime_error("Failed to create TX stream.");
+
+        device->activateStream(rxStream);
+        device->activateStream(txStream);
 
         rxMTU = device->getStreamMTU(rxStream);
         txMTU = device->getStreamMTU(txStream);
 
-        std::cout << "SoapySDR initialized with MTU (RX: " << rxMTU
-                  << ", TX: " << txMTU << ")." << std::endl;
+        std::cout << "SoapySDR device initialized successfully." << std::endl;
     } catch (const std::exception& e) {
-        throw std::runtime_error("Error during SoapySDR initialization: " +
+        throw std::runtime_error("Error in SoapySDRDriver::initialize: " +
                                  std::string(e.what()));
     }
 }

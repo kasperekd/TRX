@@ -21,22 +21,23 @@ void signalProcessing(RingBuffer<int16_t>& rxBuffer) {
 
 int main() {
     try {
-        SDRcfg::SDRConfig config(SDRcfg::SoapySDR, "MySDR", "driver=plutosdr",
-                                 100e6, 2e6, 1e6, 0, 0, 0, 20, SDRcfg::Manual,
-                                 1024, 1, SDRcfg::File, "/path/to/data", 0);
+        SDRcfg::SDRConfig config(SDRcfg::SoapySDR, "MySDR", "usb:1.2.5", 900e6,
+                                 1e6, 10e6, 900e6, 1e6, 10e6, 20,
+                                 SDRcfg::Manual, 1024, 1 << 11, SDRcfg::File,
+                                 "/path/to/data", 0);
 
         SoapySDRDriver driver(config);
         driver.initialize();
 
-        std::thread processingThread(signalProcessing,
-                                     std::ref(driver.getRxBuffer()));
+        // std::thread processingThread(signalProcessing,
+        //                              std::ref(driver.getRxBuffer()));
 
-        while (true) {
-            driver.receiveSamples();
-            driver.sendSamples();
-        }
+        // while (true) {
+        //     driver.receiveSamples();
+        //     driver.sendSamples();
+        // }
 
-        processingThread.join();
+        // processingThread.join();
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
     }

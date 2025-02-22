@@ -3,15 +3,17 @@
 
 #include <memory>
 
+#include "RingBuffer.hpp"
 #include "SDRConfig.hpp"
 
 class SDR {
    public:
     SDRcfg::SDRConfig config;
-    // TODO: Нужно использовать кольцевые буферы без блокировок который работает
-    // на основе атомарных индексов.
-    std::unique_ptr<int16_t[]> rxBuffer;
-    std::unique_ptr<int16_t[]> txBuffer;
+    // std::unique_ptr<int16_t[]> rxBuffer;
+    // std::unique_ptr<int16_t[]> txBuffer;
+
+    RingBuffer<int16_t> rxBuffer;  // Кольцевой буфер для RX
+    RingBuffer<int16_t> txBuffer;  // Кольцевой буфер для TX
 
     explicit SDR(const SDRcfg::SDRConfig& cfg);
     virtual void initialize() = 0;
