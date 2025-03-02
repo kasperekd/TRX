@@ -173,43 +173,13 @@ def decode_message(data_chunks):
     # Возвращаем результат
     return payload.decode('utf-8', errors='ignore'), message_type
 
-# def findSymbolStartIndex(signal, searchrangecoarse=None, searchrangefine=25):
-#     if not searchrangecoarse:
-#         searchrangecoarse = nFreqSamples * 10
-
-#     max_index = len(signal) - (nFreqSamples * 2 + nCyclic)
-#     if max_index <= 0:
-#         raise ValueError("Signal is too short for OFDM symbol detection.")
-
-#     crosscorr = []
-#     for i in range(min(searchrangecoarse, max_index)):
-#         s1 = signal[i:i + nCyclic]
-#         s2 = signal[i + nFreqSamples * 2:i + nFreqSamples * 2 + nCyclic]
-#         if len(s1) > 0 and len(s2) > 0:
-#             cc = np.correlate(s1, s2)
-#             crosscorr.append(cc[0] if cc.size > 0 else 0)
-#         else:
-#             crosscorr.append(0)
-
-#     peaks, _ = scipy.signal.find_peaks(crosscorr, distance=nFreqSamples * 2)
-#     o1 = peaks[0] if len(peaks) > 0 else 0
-
-#     imagpilots = []
-#     for i in range(max(0, o1 - searchrangefine), min(o1 + searchrangefine, max_index)):
-#         _, im, _, _ = decode(signal, i)
-#         imagpilots.append(im)
-
-#     best_idx = np.argmin(imagpilots)
-#     o2 = o1 - searchrangefine + best_idx
-#     return crosscorr, imagpilots, o2
-
-def findAllSymbolStartIndices(signal, searchrangecoarse=None, searchrangefine=25):
+def findSymbolStartIndex(signal, searchrangecoarse=None, searchrangefine=25):
     if not searchrangecoarse:
-        searchrangecoarse = len(signal)  # Ищем по всему сигналу
+        searchrangecoarse = nFreqSamples * 10
 
     max_index = len(signal) - (nFreqSamples * 2 + nCyclic)
     if max_index <= 0:
-        raise ValueError("Сигнал слишком короткий для OFDM.")
+        raise ValueError("Signal is too short for OFDM symbol detection.")
 
     crosscorr = []
     for i in range(min(searchrangecoarse, max_index)):
@@ -222,20 +192,16 @@ def findAllSymbolStartIndices(signal, searchrangecoarse=None, searchrangefine=25
             crosscorr.append(0)
 
     peaks, _ = scipy.signal.find_peaks(crosscorr, distance=nFreqSamples * 2)
-    
-    offsets = []
-    for o1 in peaks:
-        imagpilots = []
-        for i in range(max(0, o1 - searchrangefine), min(o1 + searchrangefine, max_index)):
-            _, im, _, _ = decode(signal, i)
-            imagpilots.append(im)
+    o1 = peaks[0] if len(peaks) > 0 else 0
 
-        best_idx = np.argmin(imagpilots)
-        o2 = o1 - searchrangefine + best_idx
-        offsets.append(o2)
-    
-    return crosscorr, offsets
+    imagpilots = []
+    for i in range(max(0, o1 - searchrangefine), min(o1 + searchrangefine, max_index)):
+        _, im, _, _ = decode(signal, i)
+        imagpilots.append(im)
 
+    best_idx = np.argmin(imagpilots)
+    o2 = o1 - searchrangefine + best_idx
+    return crosscorr, imagpilots, o2
 
 def visualize_resource_grid(resource_grid, title="Resource Grid"):
     plt.figure(figsize=(12, 6))
@@ -313,36 +279,15 @@ def main():
 
     signal = np.append(signal, np.zeros(nFreqSamples * 2))
 
-    # crosscorr, imagpilots, offset = findSymbolStartIndex(signal)
+    crosscorr, imagpilots, offset = findSymbolStartIndex(signal)
 
-    # received_chunks = []
-    # symbols_needed = len(chunks)
-    # for _ in range(symbols_needed):
-    #     data, _, constellation, received_spectrum = decode(signal, offset)
-    #     received_chunks.append(bytes(data))
-    #     all_constellation.extend(constellation)
-    #     received_resource_grid.append(received_spectrum)
-
-    crosscorr, offsets = findAllSymbolStartIndices(signal)
-
-    symbols_needed = len(chunks)
-    if len(offsets) < symbols_needed:
-        print("Предупреждение: найдено меньше символов, чем ожидается!")
-    imagpilots = []
     received_chunks = []
-    for i, offset in enumerate(offsets[:symbols_needed]):  # Берем нужное количество символов
+    symbols_needed = len(chunks)
+    for _ in range(symbols_needed):
         data, _, constellation, received_spectrum = decode(signal, offset)
-        
         received_chunks.append(bytes(data))
         all_constellation.extend(constellation)
         received_resource_grid.append(received_spectrum)
-
-    crosscorr, offsets = findAllSymbolStartIndices(signal)
-    print(offsets)
-
-    imagpilots = []
-    for offset in offsets:
-        imagpilots.append(offset)
 
     received_text, message_type = decode_message(received_chunks)
 
