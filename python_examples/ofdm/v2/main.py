@@ -4,13 +4,14 @@ import scipy.signal
 import struct
 import matplotlib.pyplot as plt
 
-nFreqSamples = 2048  # Количество поднесущих
-pilotDistanceInSamples = 32  # Расстояние между пилотами
-pilotAmplitude = 2  # Амплитуда пилотов
-nData = 256  # Количество байт данных на символ
-nCyclic = int(nFreqSamples * 2 / 4)  # Длина циклического префикса
-symbolDuration = 1e-3  # Длительность символа (в секундах)
-samplingRate = nFreqSamples / symbolDuration  # Частота дискретизации
+nFreqSamples = 2048                              # Количество поднесущих
+pilotDistanceInSamples = 32                      # Расстояние между пилотами
+pilotAmplitude = 2                               # Амплитуда пилотов
+nData = 480                                      # Количество байт данных на символ
+# nCyclic = int(128)              # Длина циклического префикса
+nCyclic = int(nFreqSamples * 2 / 4)              # Длина циклического префикса
+symbolDuration = 1e-3                            # Длительность символа (в секундах)
+samplingRate = nFreqSamples / symbolDuration     # Частота дискретизации
 subcarrierSpacing = samplingRate / nFreqSamples  # Частотный интервал между поднесущими
 k_start = 1
 
@@ -57,7 +58,8 @@ def encode(signal, data, randomSeed=1):
         s *= -1
 
     cyclicPrefix = tx_symbol[-nCyclic:]
-    signal = np.concatenate((signal, cyclicPrefix, tx_symbol))
+    signal = np.concatenate((cyclicPrefix, tx_symbol))
+    # signal = np.concatenate((signal, cyclicPrefix, tx_symbol))
     return signal, spectrum
 
 def decode(signal, offset, randomSeed=1):
@@ -112,6 +114,63 @@ def decode(signal, offset, randomSeed=1):
         data[x] = databyte
 
     return data.astype(np.uint8), imPilots, constellation, isymbol
+def decode_v2(signal, offset, randomSeed=1):
+    rxindex = offset + nCyclic
+    rx_symbol = np.zeros(nFreqSamples, dtype=complex)
+    s = 1
+
+    for a in range(nFreqSamples):
+        realpart = s * signal[rxindex]
+        rxindex += 1
+        imagpart = s * signal[rxindex]
+        rxindex += 1
+        rx_symbol[a] = complex(realpart, imagpart)
+        s *= -1
+
+    isymbol = np.fft.fft(rx_symbol)
+    random.seed(randomSeed)
+    k = k_start
+    pilot_counter = pilotDistanceInSamples / 2
+    data = np.zeros(nData)
+
+    imPilots_ = []  # Массив для хранения пилотов
+    imPilots = 0
+    
+    constellation = []
+
+    for x in range(nData):
+        bitstream = np.zeros(8)
+        for cnum in range(4):
+            pilot_counter -= 1
+            if pilot_counter <= 0:
+                pilot_counter = pilotDistanceInSamples
+                imPilots_.append(isymbol[k])
+                imPilots += np.abs(np.imag(isymbol[k]))
+                k += 1
+                if k >= nFreqSamples:
+                    k = 0
+
+            constellation.append((np.real(isymbol[k]), np.imag(isymbol[k])))
+            real_bit = 1 if np.real(isymbol[k]) > 0 else 0
+            imag_bit = 1 if np.imag(isymbol[k]) > 0 else 0
+            bitstream[int(cnum*2)] = real_bit
+            bitstream[int(cnum*2+1)] = imag_bit
+            k += 1
+            if k >= nFreqSamples:
+                k = 0
+
+        databyte = 0
+        for bit in range(8):
+            if bitstream[bit] > 0:
+                databyte |= (1 << bit)
+
+        r = random.randint(0, 255)
+        databyte ^= r
+        data[x] = databyte
+
+    return data.astype(np.uint8), imPilots_, constellation, isymbol
+
+
 
 def prepare_data_for_transmission(text, message_type=0x01):
     """
@@ -212,10 +271,10 @@ def visualize_resource_grid(resource_grid, title="Resource Grid"):
     plt.ylabel("Символы времени")
     plt.show()
 
-def visualize_old_plots(crosscorr, imagpilots, offset, constellation):
-    plt.figure(figsize=(18, 6))
+def visualize_old_plots(crosscorr, imagpilots, offset, constellation, signal):
+    plt.figure(figsize=(18, 12))
 
-    plt.subplot(131)
+    plt.subplot(241)
     constellation = np.array(constellation)
     plt.scatter(constellation[:, 0], constellation[:, 1], alpha=0.5)
     plt.title("Constellation Diagram")
@@ -223,7 +282,7 @@ def visualize_old_plots(crosscorr, imagpilots, offset, constellation):
     plt.ylabel("Imaginary")
     plt.grid()
 
-    plt.subplot(132)
+    plt.subplot(242)
     plt.plot(crosscorr)
     plt.axvline(x=offset, color='r', linestyle='--', label="Detected Symbol Start")
     plt.title("Cross-Correlation for Cyclic Prefix")
@@ -231,11 +290,17 @@ def visualize_old_plots(crosscorr, imagpilots, offset, constellation):
     plt.ylabel("Correlation")
     plt.legend()
 
-    plt.subplot(133)
+    plt.subplot(243)
     plt.plot(range(len(imagpilots)), imagpilots)
     plt.title("Pilot Imaginary Parts for Fine Synchronization")
     plt.xlabel("Relative Sample Index")
     plt.ylabel("Sum of Imaginary Parts")
+
+    plt.subplot(244)
+    plt.plot(signal)
+    plt.title("signal")
+    plt.xlabel("")
+    plt.ylabel("")
 
     plt.tight_layout()
     plt.show()
@@ -264,32 +329,73 @@ def main():
         print(f"Ошибка при чтении файла: {e}")
         return
 
-    print(f"Исходный текст из файла:\n{text}")
+    # print(f"Исходный текст из файла:\n{text}")
 
     chunks = prepare_data_for_transmission(text, message_type=0x01)
 
-    signal = np.zeros(nFreqSamples * 3)
+    # signal = []
+    signal = np.zeros(nFreqSamples)
     transmitted_resource_grid = []
     received_resource_grid = []
     all_constellation = []
 
-    for chunk in chunks:
-        signal, spectrum = encode(signal, np.frombuffer(chunk, dtype=np.uint8))
-        transmitted_resource_grid.append(spectrum)
 
-    signal = np.append(signal, np.zeros(nFreqSamples * 2))
+    print(len(chunks))
+    for chunk in chunks:
+        signal_, spectrum = encode(signal, np.frombuffer(chunk, dtype=np.uint8))
+        signal = np.append(signal, signal_)
+        transmitted_resource_grid.append(spectrum)
+        print(len(signal))
+
+    signal = np.append(signal, np.zeros(nFreqSamples * 1))
+
+
+    noise_kernel = np.random.normal(loc=0, scale=1, size=10)
+
+    signal = scipy.signal.convolve(signal, noise_kernel, mode='full')
 
     crosscorr, imagpilots, offset = findSymbolStartIndex(signal)
 
+
+    crosscorr, imagpilots, offset = findSymbolStartIndex(signal)
+
+    # all_pilots = []
+    # received_chunks = []
+    # symbols_needed = len(chunks)
+    # for _ in range(symbols_needed):
+    #     data, pilots, constellation, received_spectrum = decode(signal, offset)
+    #     received_chunks.append(bytes(data))
+    #     all_constellation.extend(constellation)
+    #     received_resource_grid.append(received_spectrum)
+    #     # all_pilots.extend(pilots) 
+
+    # received_text, message_type = decode_message(received_chunks)
+    # # plt.figure(figsize=(12, 6))
+    # # plt.plot(np.abs(all_pilots), 'ro-', markersize=5)
+    # # plt.title("Пилотные сигналы")
+    # # plt.xlabel("Индекс пилота")
+    # # plt.ylabel("Амплитуда")
+    # # plt.grid(True)
+    # # plt.show()
+
+    all_pilots = []
     received_chunks = []
     symbols_needed = len(chunks)
     for _ in range(symbols_needed):
-        data, _, constellation, received_spectrum = decode(signal, offset)
+        data, pilots, constellation, received_spectrum = decode_v2(signal, offset)
         received_chunks.append(bytes(data))
         all_constellation.extend(constellation)
         received_resource_grid.append(received_spectrum)
+        all_pilots.extend(pilots) 
 
     received_text, message_type = decode_message(received_chunks)
+    plt.figure(figsize=(12, 6))
+    plt.plot(np.abs(all_pilots), 'ro-', markersize=5)
+    plt.title("Пилотные сигналы")
+    plt.xlabel("Индекс пилота")
+    plt.ylabel("Амплитуда")
+    plt.grid(True)
+    plt.show()
 
     try:
         with open(output_file, 'w', encoding='utf-8') as file:
@@ -308,7 +414,7 @@ def main():
     visualize_resource_grid(received_resource_grid, title="Received Resource Grid")
 
     print("Старые графики:")
-    visualize_old_plots(crosscorr, imagpilots, offset, all_constellation)
+    visualize_old_plots(crosscorr, imagpilots, offset, all_constellation, signal)
 
 if __name__ == "__main__":
     main()
