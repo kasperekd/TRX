@@ -1,0 +1,2 @@
+usage: main.py [-h] [--K K] [--CP CP] [--P P] [--pilotValue PILOTVALUE] [--Modulation_type {BPSK,QPSK,8PSK,QAM16,QAM64}] {modulate,demodulate} input_file output_file
+main.py: error: the following arguments are required: mode, input_file, output_file
