@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import interpolate
 import commpy.modulation as cm
+import scipy.signal
 
 class OFDM:
     def __init__(self, K=64, CP=None, P=8, pilotValue=3+3j, Modulation_type='QPSK'):
@@ -30,29 +31,82 @@ class OFDM:
         ofdm_with_cp = self._add_cp(ofdm_time)
         return ofdm_with_cp, ofdm_symbol
     
+    def _symbol_sync(self, received_signal):
+        N = self.K
+        Ng = self.CP
+        len_signal = len(received_signal)
+        
+        # Убедимся, что у нас достаточно данных для вычисления корреляции
+        if len_signal < 2 * N:
+            raise ValueError("Принятый сигнал слишком короткий для символьной синхронизации")
+        
+        crosscorr = []
+        
+        # Проходим по всем возможным смещениям
+        for i in range(len_signal - 2 * N):
+            s1 = received_signal[i:i + Ng]  # Циклический префикс
+            s2 = received_signal[i + N:i + N + Ng]  # Повтор циклического префикса
+            if len(s1) > 0 and len(s2) > 0:
+                cc = np.correlate(s1, s2)  # Кросс-корреляция
+                crosscorr.append(cc[0] if cc.size > 0 else 0)
+            else:
+                crosscorr.append(0)
+        
+        # Преобразуем кросс-корреляционную функцию в вещественные значения
+        crosscorr_real = np.abs(crosscorr)
+        
+        # Поиск пиков в кросс-корреляционной функции
+        peaks, _ = scipy.signal.find_peaks(crosscorr_real, height=0.9 * np.max(crosscorr_real))
+        
+        if len(peaks) == 0:
+            raise ValueError("Не удалось найти пик в кросс-корреляционной функции")
+        
+        # Выбираем первый пик как начальное смещение
+        o1 = peaks[0]
+        
+        # Определяем наилучшее смещение на основе анализа пилотов
+        imagpilots = []
+        searchrangefine = 25
+        max_index = len_signal - (N * 2 + Ng)
+        
+        for i in range(max(0, o1 - searchrangefine), min(o1 + searchrangefine, max_index)):
+            _, im, _, _ = self._decode(received_signal, i)
+            imagpilots.append(im)
+        
+        best_idx = np.argmin(imagpilots)
+        sync_offset = o1 - searchrangefine + best_idx
+        
+        # Логирование для отладки
+        print(f"Максимальная корреляция: {np.max(crosscorr_real)}, Смещение: {sync_offset}")
+        print(f"Кросс-корреляционная функция: {crosscorr_real}")
+        print(f"Пики: {peaks}")
+        print(f"Наилучшее смещение: {best_idx}, Ошибки пилотов: {imagpilots}")
+        
+        return sync_offset
+
+    def _decode(self, signal, start_index):
+        # Этот метод должен декодировать OFDM-символ и возвращать значения мнимых пилотов
+        # Например, можно использовать существующие методы для декодирования и получения пилотов
+        received_signal_no_cp = self._remove_cp(signal[start_index:])
+        ofdm_demod = self._dft(received_signal_no_cp)
+        pilots = ofdm_demod[self.pilotCarriers]
+        pilot_errors = np.abs(pilots - self.pilotValue)
+        im = np.sum(pilot_errors)  # Пример метрики для ошибок пилотов
+        
+        return ofdm_demod, im, None, None
+
     def demodulate(self, received_signal):
-        sync_offset = self._time_sync(received_signal)
+        # Выполняем символьную синхронизацию
+        print(len(received_signal))
+        sync_offset = self._symbol_sync(received_signal) - (self.P - 1)
         print(sync_offset)
         received_signal_no_cp = self._remove_cp(received_signal[sync_offset:])
         ofdm_demod = self._dft(received_signal_no_cp)
         h_est = self._channel_estimate(ofdm_demod)
-        freq_offset = self._freq_sync(ofdm_demod, h_est)
-        ofdm_demod = ofdm_demod * np.exp(-1j * 2 * np.pi * freq_offset * np.arange(self.K))
         equalized = self._equalize(ofdm_demod, h_est)
         qam_est = self._get_payload(equalized)
         bits_est = self._demodulation(qam_est)
         return bits_est, h_est, qam_est
-    
-    def _time_sync(self, received_signal):
-        corr = np.correlate(received_signal, received_signal, mode='full')
-        corr = corr[len(corr) // 2:]
-        max_corr_idx = np.argmax(corr)
-        return max_corr_idx
-    
-    def _freq_sync(self, ofdm_demod, h_est):
-        pilot_values = ofdm_demod[self.pilotCarriers] / h_est[self.pilotCarriers]
-        freq_offset = np.angle(pilot_values[1:] / pilot_values[:-1]).mean() / (2 * np.pi * self.K)
-        return freq_offset
 
     def _modulation(self, bits):
         if self.Modulation_type == "QPSK":
@@ -201,12 +255,12 @@ class Channel:
 def main_sim():
     K = 64  # Количество поднесущих OFDM
     CP = K // 4  # Длина циклического префикса (25%)
-    P = 8  # Количество пилотных сигналов
+    P = K // 8 # Количество пилотных сигналов
     pilotValue = 3 + 3j  # Значение пилотного сигнала
     Modulation_type = 'QPSK'  # (BPSK, QPSK, 8PSK, QAM16, QAM64)
     channel_type = 'random'  # (awgn или random)
-    SNRdb = 50
-    noise_samples = 100
+    SNRdb = 20
+    noise_samples = 1123
 
     ofdm = OFDM(K=K, CP=CP, P=P, pilotValue=pilotValue, Modulation_type=Modulation_type)
     channel = Channel(channel_type=channel_type, SNRdb=SNRdb, noise_samples=noise_samples)
@@ -254,20 +308,28 @@ def main():
     parser.add_argument("--P", type=int, default=8, help="Number of pilot signals")
     parser.add_argument("--pilotValue", type=complex, default=3+3j, help="Value of pilot signal")
     parser.add_argument("--Modulation_type", default='QPSK', choices=["BPSK", "QPSK", "8PSK", "QAM16", "QAM64"], help="Modulation method")
+    parser.add_argument("--file_format", choices=["text", "binary"], default="text", help="Format of the input/output file: text or binary")
     
     args = parser.parse_args()
 
     ofdm = OFDM(K=args.K, CP=args.CP, P=args.P, pilotValue=args.pilotValue, Modulation_type=args.Modulation_type)
 
     if args.mode == "modulate":
-        with open(args.input_file, 'r') as file:
-            text = file.read()
+        # Read text from file
+        if args.file_format == "text":
+            with open(args.input_file, 'r') as file:
+                text = file.read()
+            bits = text_to_bits(text)
+        elif args.file_format == "binary":
+            with open(args.input_file, 'rb') as file:
+                bits = np.fromfile(file, dtype=np.uint8)
+                bits = np.unpackbits(bits).astype(int)
         
-        bits = text_to_bits(text)
-        
+        # Split bits into chunks that fit into one OFDM symbol payload
         num_symbols = (len(bits) + ofdm.payloadBits_per_OFDM - 1) // ofdm.payloadBits_per_OFDM
         bit_chunks = [bits[i*ofdm.payloadBits_per_OFDM:(i+1)*ofdm.payloadBits_per_OFDM] for i in range(num_symbols)]
         
+        # Modulate each chunk
         ofdm_symbols = []
         for chunk in bit_chunks:
             if len(chunk) < ofdm.payloadBits_per_OFDM:
@@ -275,32 +337,82 @@ def main():
             tx_signal, original_symbol = ofdm.modulate(chunk)
             ofdm_symbols.append(tx_signal)
         
+        # Flatten the list of OFDM symbols into a single array
         tx_signal_flat = np.concatenate(ofdm_symbols)
         
-        with open(args.output_file, 'wb') as file:
-            iq_samples = np.vstack((tx_signal_flat.real, tx_signal_flat.imag)).T.astype(np.float32)
-            iq_samples.tofile(file)
+        # Write I + Q samples to file in binary format
+        if args.file_format == "binary":
+            with open(args.output_file, 'wb') as file:
+                # Convert complex numbers to float32 for I and Q components
+                iq_samples = np.vstack((tx_signal_flat.real, tx_signal_flat.imag)).T.astype(np.float32)
+                iq_samples.tofile(file)
+        elif args.file_format == "text":
+            with open(args.output_file, 'w') as file:
+                for sample in tx_signal_flat:
+                    file.write(f"{sample.real} {sample.imag}\n")
     
+    # elif args.mode == "demodulate":
+    #     # Read I + Q samples from file in binary or text format
+    #     if args.file_format == "binary":
+    #         iq_samples = np.fromfile(args.input_file, dtype=np.float32)
+    #         iq_samples = iq_samples.reshape(-1, 2)
+    #         received_signal = iq_samples[:, 0] + 1j * iq_samples[:, 1]
+    #     elif args.file_format == "text":
+    #         with open(args.input_file, 'r') as file:
+    #             lines = file.readlines()
+    #             iq_samples = [list(map(float, line.split())) for line in lines]
+    #             received_signal = np.array([complex(i, q) for i, q in iq_samples])
+        
+    #     # Split IQ samples into OFDM symbols
+    #     ofdm_symbol_length = ofdm.K + ofdm.CP
+    #     num_symbols = len(received_signal) // ofdm_symbol_length
+    #     ofdm_symbols = [received_signal[i*ofdm_symbol_length:(i+1)*ofdm_symbol_length] for i in range(num_symbols)]
+    #     # print(len(ofdm_symbols))
+    #     # Demodulate each OFDM symbol
+    #     all_bits_est = []
+    #     for symbol in ofdm_symbols:
+    #         bits_est, h_est, qam_est = ofdm.demodulate(symbol)
+    #         all_bits_est.extend(bits_est)
+        
+    #     # Convert bits to text
+    #     decoded_text = bits_to_text(all_bits_est)
+        
+    #     # Write decoded text to file
+    #     with open(args.output_file, 'w') as file:
+    #         file.write(decoded_text)
     elif args.mode == "demodulate":
-        iq_samples = np.fromfile(args.input_file, dtype=np.float32)
-        iq_samples = iq_samples.reshape(-1, 2)
+        # Read I + Q samples from file in binary or text format
+        if args.file_format == "binary":
+            iq_samples = np.fromfile(args.input_file, dtype=np.float32)
+            iq_samples = iq_samples.reshape(-1, 2)
+            received_signal = iq_samples[:, 0] + 1j * iq_samples[:, 1]
+        elif args.file_format == "text":
+            with open(args.input_file, 'r') as file:
+                lines = file.readlines()
+                iq_samples = [list(map(float, line.split())) for line in lines]
+                received_signal = np.array([complex(i, q) for i, q in iq_samples])
         
-        received_signal = iq_samples[:, 0] + 1j * iq_samples[:, 1]
+        # Выполняем символьную синхронизацию
+        sync_offset = ofdm._symbol_sync(received_signal)
         
+        # Разбиваем сигнал на OFDM символы
         ofdm_symbol_length = ofdm.K + ofdm.CP
-        num_symbols = len(received_signal) // ofdm_symbol_length
-        ofdm_symbols = [received_signal[i*ofdm_symbol_length:(i+1)*ofdm_symbol_length] for i in range(num_symbols)]
+        num_symbols = (len(received_signal) - sync_offset) // ofdm_symbol_length
+        ofdm_symbols = [received_signal[sync_offset + i*ofdm_symbol_length:sync_offset + (i+1)*ofdm_symbol_length] for i in range(num_symbols)]
         
+        # Демодулируем каждый OFDM символ
         all_bits_est = []
         for symbol in ofdm_symbols:
             bits_est, h_est, qam_est = ofdm.demodulate(symbol)
             all_bits_est.extend(bits_est)
         
+        # Преобразуем биты в текст
         decoded_text = bits_to_text(all_bits_est)
         
+        # Записываем декодированный текст в файл
         with open(args.output_file, 'w') as file:
             file.write(decoded_text)
 
 if __name__ == "__main__":
-    main_sim()
-    # main()
+    # main_sim()
+    main()
