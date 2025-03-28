@@ -2,9 +2,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import commpy.modulation as cm
 import scipy.signal
+import argparse
+import sys
+import numpy as np
+from scipy.io import savemat, loadmat
+
+# TODO: Проверить подгон по пилотам, формирование пакетов, запись и чтение из файла
 
 class OFDM:
-    def __init__(self, modulation_type='QPSK', num_subcarriers=64, cp_length=16, pilot_spacing=16, pilot_value=1+1j, visualize=True):
+    def __init__(self, modulation_type='QPSK', num_subcarriers=64, cp_length=16, pilot_spacing=16, pilot_value=1+1j, visualize=True, threshold=0.75):
         """
         Инициализация OFDM модуляции.
         
@@ -15,6 +21,7 @@ class OFDM:
         pilot_spacing (int): Расстояние между пилотами (например, 16).
         pilot_value (complex): Значение всех пилотов (например, 1+1j).
         visualize (bool): Включить визуализацию.
+        threshold (float): Порго для find_peaks
         """
         self._setup_modulation(modulation_type)
         self.num_subcarriers = num_subcarriers
@@ -22,12 +29,11 @@ class OFDM:
         self.pilot_spacing = pilot_spacing
         self.pilot_value = pilot_value
         self.visualize = visualize
+        self.threshold = threshold
         
-        # Генерация позиций пилотов через spacing
         self.pilot_positions = self._generate_pilot_positions()
 
     def _setup_modulation(self, modulation_type):
-        """Настройка модуляции с PSKModem(4) для QPSK"""
         m = None
         if modulation_type == 'QPSK':
             m = 4
@@ -49,26 +55,16 @@ class OFDM:
         self.bits_per_symbol = int(np.log2(m))
 
     def _generate_pilot_positions(self):
-        """Генерация позиций пилотов через spacing"""
         positions = []
         for i in range(0, self.num_subcarriers, self.pilot_spacing):
             positions.append(i)
         return positions
 
     def generate_ofdm_symbol(self, bits):
-        """
-        Формирование OFDM-символа от битов до комплексных отсчетов.
-        
-        Параметры:
-        bits (np.array): Входные биты.
-        
-        Возвращает:
-        np.array: Комплексные отсчеты OFDM-символа.
-        """
         # Модуляция битов в символы
         data_symbols = self.modulate_bits(bits)
         
-        # Создаем массив поднесущих (частотная область)
+        # Создаем массив поднесущих
         subcarriers = np.zeros(self.num_subcarriers, dtype=complex)
         
         # Заполнение пилотов
@@ -87,7 +83,7 @@ class OFDM:
         ofdm_symbol = np.concatenate([cp, time_domain])
         
         # Визуализация
-        self._visualize_all(subcarriers, ofdm_symbol)
+        # self._visualize_all(subcarriers, ofdm_symbol)
         
         return ofdm_symbol
 
@@ -104,7 +100,7 @@ class OFDM:
         if not self.visualize:
             return
         
-        fig = plt.figure(figsize=(12, 18))
+        fig = plt.figure(figsize=(12, 12))
         
         # Констелляция данных
         ax1 = fig.add_subplot(3, 1, 1)
@@ -151,73 +147,219 @@ class OFDM:
         plt.show()
 
     def get_max_bits(self):
-        """Возвращает максимальное количество бит, которое можно передать за один OFDM-символ"""
         data_subcarriers = self.num_subcarriers - len(self.pilot_positions)
         return data_subcarriers * self.bits_per_symbol
 
     def sync_correlation(self, received_signal):
         symbol_length = self.num_subcarriers + self.cp_length
         crosscorr = []
-        
         for i in range(len(received_signal) - symbol_length + 1):
             cp_start = i
             cp_end = i + self.cp_length
             main_start = i + self.num_subcarriers
             main_end = main_start + self.cp_length
-            
             if (cp_end <= len(received_signal)) and (main_end <= len(received_signal)):
                 cp_segment = received_signal[cp_start:cp_end]
                 main_segment = received_signal[main_start:main_end]
-                cc = np.abs(np.correlate(cp_segment, main_segment, mode='valid')[0])
-                crosscorr.append(cc)
+                # Нормализация для устойчивости к уровню сигнала
+                cc = np.abs(np.correlate(cp_segment / np.linalg.norm(cp_segment),
+                                        main_segment / np.linalg.norm(main_segment)))
+                crosscorr.append(cc[0])
             else:
                 crosscorr.append(0)
+        crosscorr = np.array(crosscorr)
         
-        crosscorr = np.array(crosscorr)  # Преобразуем в numpy массив
-        
-        peaks, _ = scipy.signal.find_peaks(crosscorr, distance=self.num_subcarriers)
-        
-        if len(peaks) > 0:
-            # Находим пик с максимальным значением
-            max_peak_val = np.max(crosscorr[peaks])
-            peak_indices = np.where(crosscorr == max_peak_val)[0]
-            peak_index = peak_indices[0]  # Берем первый из возможных
-        else:
-            peak_index = 0  # Если пиков нет, возвращаем начало буфера
+        # Установка порога для пиков
+        peaks, _ = scipy.signal.find_peaks(crosscorr, 
+                                          height=self.threshold * np.max(crosscorr),  # Используем относительный порог
+                                          distance=symbol_length)
+
+        # Это эксперимент 
+        valid_peaks = []
+        for peak in peaks:
+            # Подстройка синхронизации по пилотам
+            best_offset = 0
+            best_score = -np.inf
+            # print(pilot_spacing)
+            for offset in range(-5, 6):  # Проверяем смещение
+            # for offset in range(-int(pilot_spacing - 1), int(pilot_spacing - 1) + 1):
+            # for offset in range(-int(pilot_spacing // 2 - 1), int(pilot_spacing // 2 ) + 1):
+                candidate_peak = peak + offset
+                if candidate_peak < 0 or candidate_peak + symbol_length > len(received_signal):
+                    continue
+                symbol_with_cp = received_signal[candidate_peak:candidate_peak + symbol_length]
+                symbol = symbol_with_cp[self.cp_length:]
+                freq_domain = np.fft.fft(symbol)
+                pilots = freq_domain[self.pilot_positions]
+
+                weights = np.abs(self.pilot_value)
+                current_score = np.sum(weights * np.abs(pilots / self.pilot_value))
+
+                # current_score = np.abs(np.sum(pilots * np.conj(self.pilot_value)))
+                # current_score = np.mean(np.abs(pilots - self.pilot_value))
+                # current_score = np.abs(np.sum(pilots / self.pilot_value))  # Сумма нормированных пилотов
+                # current_score = np.sum(np.abs(pilots / self.pilot_value - 1))
+                if current_score > best_score:
+                    best_score = current_score
+                    best_offset = offset
+                    
+            adaptive_threshold = np.median(np.abs(pilots))
+            if best_score > adaptive_threshold:
+                valid_peaks.append(peak + best_offset)
+            # if best_score > 0.5 * len(self.pilot_positions):  # порог совпадения
+            #     valid_peaks.append(peak + best_offset)
         
         if self.visualize:
-            self._visualize_sync(received_signal, crosscorr, peak_index)
-        print(peak_index)
-        return peak_index
+            self._visualize_sync(received_signal, crosscorr, valid_peaks, peaks)
+        
+        print(peaks)
+        print(valid_peaks)
+
+        return peaks
+        # return valid_peaks
+
+    def estimate_cfo_from_cp(self, symbol_with_cp):
+        cp_length = self.cp_length
+        num_subcarriers = self.num_subcarriers
+        cp_segment = symbol_with_cp[:cp_length]
+        main_segment = symbol_with_cp[cp_length:cp_length*2]
+        correlation = np.sum(np.conjugate(cp_segment) * main_segment)
+        epsilon = np.angle(correlation) / (2 * np.pi)
+        return epsilon
+
+    def compensate_frequency_offset(self, symbol_with_cp, epsilon):
+        n = np.arange(len(symbol_with_cp))
+        correction = np.exp(-1j * 2 * np.pi * epsilon * n / self.num_subcarriers)
+        return symbol_with_cp * correction
 
     def demodulate(self, received_signal):
-        start_index = self.sync_correlation(received_signal)
+        valid_peaks = self.sync_correlation(received_signal)
         symbol_length = self.num_subcarriers + self.cp_length
-        symbol_with_cp = received_signal[start_index:start_index + symbol_length]
-        symbol = symbol_with_cp[self.cp_length:]
-        freq_domain = np.fft.fft(symbol)
-        
-        data_indices = [i for i in range(self.num_subcarriers) if i not in self.pilot_positions]
-        data = freq_domain[data_indices]
-        
-        # Исправление: добавляем параметр demod_type='hard' и bits=True
-        demod_bits = self.modulation.demodulate(data, demod_type='hard')
-        
-        return demod_bits.astype(int)
+        all_demod_bits = []
+        all_data = []
 
-    def _visualize_sync(self, received_signal, crosscorr, start_index):
-        plt.figure(figsize=(14, 6))
+        for start_index in valid_peaks:
+            if start_index + symbol_length > len(received_signal):
+                continue
+            symbol_with_cp = received_signal[start_index:start_index + symbol_length]
+
+            # epsilon = self.estimate_cfo_from_cp(symbol_with_cp)
+            # symbol_with_cp_corrected = self.compensate_frequency_offset(symbol_with_cp, epsilon)
+            
+            # Выделяем основной символ без ЦП
+            # symbol = symbol_with_cp_corrected[self.cp_length:]
+            # freq_domain = np.fft.fft(symbol)
+            symbol = symbol_with_cp[self.cp_length:]
+            freq_domain = np.fft.fft(symbol)
+
+
+            # Извлечение пилотов и данных
+            pilots = freq_domain[self.pilot_positions]
+            data_indices = [i for i in range(self.num_subcarriers) if i not in self.pilot_positions]
+            data = freq_domain[data_indices]
+            
+            # Оценка канала по пилотам
+            H_p = pilots / self.pilot_value
+            
+            # Интерполяция канала для всех поднесущих
+            pilot_indices = np.array(self.pilot_positions)
+            all_indices = np.arange(self.num_subcarriers)
+            real_H = np.real(H_p)
+            imag_H = np.imag(H_p)
+
+            # quadratic linear nearest-up zero slinear cubic previous
+            f_real = scipy.interpolate.interp1d(pilot_indices, real_H, kind='linear', fill_value="extrapolate")
+            f_imag = scipy.interpolate.interp1d(pilot_indices, imag_H, kind='linear', fill_value="extrapolate")
+            H_est = f_real(all_indices) + 1j * f_imag(all_indices)
+            
+            # print(f_real(all_indices))
+
+            # Коррекция данных
+            data_corrected = data / H_est[data_indices]
+            
+            # Демодуляция после компенсации канала
+            demod_bits = self.modulation.demodulate(data_corrected, demod_type='hard').astype(int)
+            all_demod_bits.extend(demod_bits)
+            
+            if self.visualize:
+                all_data.append({
+                    'raw_data': data,
+                    'corrected_data': data_corrected,
+                    'H_est': H_est,
+                    # 'estimated_epsilon': epsilon
+                })
+        
+        if self.visualize:
+            self._plot_channel_estimation(all_data)
+    
+        return np.array(all_demod_bits)
+
+    def _plot_channel_estimation(self, all_data):
+        if not self.visualize or not all_data:
+            return
+        
+        first_symbol = all_data[0]
+        H_est = first_symbol['H_est']
+        
+        plt.figure(figsize=(6, 6))
         
         plt.subplot(2, 1, 1)
+        plt.plot(np.real(H_est), label='Real(H_est)', color='blue')
+        plt.plot(np.imag(H_est), label='Imag(H_est)', color='orange')
+        plt.scatter(self.pilot_positions, np.real(H_est[self.pilot_positions]), 
+                    marker='x', color='red', label='Пилоты')
+        plt.title('Оцененный канал H_est')
+        plt.xlabel('Поднесущая')
+        plt.ylabel('Значение')
+        plt.legend()
+        
+        plt.subplot(2, 1, 2)
+        plt.scatter(first_symbol['raw_data'].real, first_symbol['raw_data'].imag, 
+                    label='Исходные данные', s=10, alpha=0.5)
+        plt.scatter(first_symbol['corrected_data'].real, first_symbol['corrected_data'].imag, 
+                    label='Исправленные данные', s=10, alpha=0.5)
+        plt.title('Данные до и после компенсации канала')
+        plt.xlabel('I')
+        plt.ylabel('Q')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+    def _plot_received_constellation(self, all_data):
+        if not self.visualize or not all_data:
+            return
+        
+        combined_data = np.concatenate(all_data)
+        plt.figure(figsize=(10, 8))
+        plt.scatter(combined_data.real, combined_data.imag, s=10, color='blue', 
+                   label='Принятые символы')
+        plt.title('констелляция')
+        plt.xlabel('I')
+        plt.ylabel('Q')
+        plt.grid(True)
+        plt.legend()
+        plt.show()
+    
+
+    def _visualize_sync(self, received_signal, crosscorr, valid_peaks, all_peaks=None):
+        plt.figure(figsize=(12, 12))
+        plt.subplot(2, 1, 1)
         plt.plot(crosscorr, label='Кросскорреляция')
-        plt.scatter(start_index, crosscorr[start_index], color='red', label='Начало OFDM-символа')
+        plt.scatter(valid_peaks, crosscorr[valid_peaks], color='green', label='Валидные пики')
+        if all_peaks is not None:
+            plt.scatter(all_peaks, crosscorr[all_peaks], color='red', alpha=0.3, label='Все пики')
         plt.title('Кросскорреляционный анализ')
         plt.legend()
         
         plt.subplot(2, 1, 2)
         plt.plot(received_signal.real, label='I')
         plt.plot(received_signal.imag, label='Q')
-        plt.axvline(x=start_index, color='green', linestyle='--')
+        for peak in valid_peaks:
+            plt.axvline(x=peak, color='green', linestyle='--')
+        if all_peaks is not None:
+            for peak in all_peaks:
+                plt.axvline(x=peak, color='red', linestyle=':', alpha=0.3)
         plt.title('Синхронизация')
         plt.legend()
         plt.show()
@@ -229,36 +371,179 @@ class OFDM:
                 f"CP Length: {self.cp_length}, "
                 f"Pilot Spacing: {self.pilot_spacing})")
     
-if __name__ == "__main__":
-    modulation_type = 'QPSK'
-    num_subcarriers = 64
-    cp_length = num_subcarriers // 2
-    pilot_spacing = num_subcarriers // 8
-    pilot_value = 1 + 1j
+def text_to_bits(text):
+    bits = []
+    for char in text:
+        bits.extend([int(b) for b in format(ord(char), '08b')])
+    return np.array(bits, dtype=np.uint8)
 
+def bits_to_text(bits):
+    chars = []
+    for i in range(0, len(bits), 8):
+        byte = bits[i:i+8]
+        chars.append(chr(int(''.join(map(str, byte)), 2)))
+    return ''.join(chars)
+
+def read_iq_file(filename, binary=True):
+    if binary:
+        dt = np.dtype([('real', np.float32), ('imag', np.float32)])
+        data = np.fromfile(filename, dtype=dt)
+        return data['real'] + 1j*data['imag']
+    else:
+        with open(filename, 'r') as f:
+            return np.array([complex(line.strip()) for line in f])
+
+def write_iq_file(filename, samples, binary=True):
+    if binary:
+        real = np.real(samples).astype(np.float32)
+        imag = np.imag(samples).astype(np.float32)
+        with open(filename, 'wb') as f:
+            for r, i in zip(real, imag):
+                f.write(r.tobytes())
+                f.write(i.tobytes())
+    else:
+        with open(filename, 'w') as f:
+            for sample in samples:
+                f.write(f"{sample.real},{sample.imag}\n")
+
+def process_modem(args):
+    cp_length = args.cp if args.cp is not None else args.subcarriers // 2
+    ofdm = OFDM(
+        modulation_type=args.modulation,
+        num_subcarriers=args.subcarriers,
+        cp_length=cp_length,
+        pilot_spacing=args.pilot_spacing,
+        visualize=True
+    )
+
+    if args.command == 'modulate':
+        with open(args.input, 'r') as f:
+            text = f.read()
+        bits = text_to_bits(text)
+
+        symbols = []
+        max_bits = ofdm.get_max_bits()
+        count = 0
+        for i in range(0, len(bits), max_bits):
+            chunk = bits[i:i+max_bits]
+            symbols.append(ofdm.generate_ofdm_symbol(chunk))
+            count += 1
+
+        all_samples = np.concatenate(symbols)
+        write_iq_file(args.output, all_samples, args.binary)
+
+        print(f"{count} OFDM symbols")
+        print(f"Modulated to {args.output}")
+
+    elif args.command == 'demodulate':
+        samples = read_iq_file(args.input, args.binary)
+        # print(samples)
+        
+        demod_bits = ofdm.demodulate(samples)
+        text = bits_to_text(demod_bits)
+
+        with open(args.output, 'w') as f:
+            f.write(text)
+        print(f"Demodulated to {args.output}")
+
+def test():
+    modulation_type = 'QAM16'
+    num_subcarriers = 2048
+    cp_length = num_subcarriers // 2
+    pilot_spacing = num_subcarriers // 32
+    pilot_value = 1 + 1j
     ofdm = OFDM(
         modulation_type=modulation_type,
         num_subcarriers=num_subcarriers,
         cp_length=cp_length,
         pilot_spacing=pilot_spacing,
         pilot_value=pilot_value,
-        visualize=True
+        visualize=True,
+        threshold=0.70
     )
-
-
-    max_bits = ofdm.get_max_bits()
-    bits = np.random.randint(0, 2, max_bits)
-    iq_samples = ofdm.generate_ofdm_symbol(bits)
-
-    buffer_length = 1024
-    noise = (np.random.randn(buffer_length) + 1j*np.random.randn(buffer_length)) * 0.02
-    start_in_buffer = 200
-    received_signal = np.copy(noise)
-    received_signal[start_in_buffer:start_in_buffer+len(iq_samples)] += iq_samples
-
-    demod_bits = ofdm.demodulate(received_signal)
-    print("Исходные биты: ", bits[:10], "...")
-    print("Демодулированные биты: ", demod_bits[:10], "...")
+    max_bits_per_symbol = ofdm.get_max_bits()
     
-    correct = np.sum(bits == demod_bits[:len(bits)]) / len(bits)
+    # Генерация
+    num_symbols = 3
+    symbols = []
+    all_bits = []
+    for _ in range(num_symbols):
+        bits = np.random.randint(0, 2, max_bits_per_symbol)
+        all_bits.append(bits)
+        iq_samples = ofdm.generate_ofdm_symbol(bits)
+        symbols.append(iq_samples)
+    
+    # Создание буфера с несколькими символами
+    symbol_length = len(symbols[0]) 
+    buffer_length = 20480
+    noise = (np.random.randn(buffer_length) + 1j*np.random.randn(buffer_length)) * 0.001
+    received_signal = np.copy(noise)
+    
+
+    # Расположение символов в буфере
+    start_in_buffer = 2000
+    for symbol in symbols:
+        symbol_end = start_in_buffer + len(symbol)
+        received_signal[start_in_buffer:symbol_end] += symbol
+        start_in_buffer += symbol_length  # Смещаемся на длину символа
+    
+    noise_kernel = np.random.normal(loc=0, scale=1, size=3)
+    received_signal = scipy.signal.convolve(received_signal, noise_kernel, mode='full')
+
+    # Демодуляция ВСЕХ символов
+    demod_bits = ofdm.demodulate(received_signal)
+    
+    # Проверка точности
+    all_bits = np.concatenate(all_bits)
+    correct = np.sum(all_bits == demod_bits[:len(all_bits)]) / len(all_bits)
     print(f"Точность: {correct * 100:.2f}%")
+
+    # Вывод первых 10 бит каждого символа
+    for i in range(num_symbols):
+        start = i * max_bits_per_symbol
+        end = (i+1) * max_bits_per_symbol
+        print(f"Символ {i+1}:")
+        print("  Исходные биты: ", all_bits[start:end][:10], "...")
+        print("  Демодулированные: ", demod_bits[start:end][:10], "...")
+
+def main():
+    # modulate -i input.txt -o output.bin --binary --modulation QAM16 --subcarriers 2048
+    # demodulate -i output.bin -o recovered.txt --binary --modulation QAM16 --subcarriers 2048
+
+    parser = argparse.ArgumentParser(description="OFDM Modulation/Demodulation")
+    subparsers = parser.add_subparsers(dest='command')
+
+    # Test
+    test_parser = subparsers.add_parser('test', help="Run original test scenario")
+
+    # Mod
+    mod_parser = subparsers.add_parser('modulate', help="Modulate text file to IQ samples")
+    mod_parser.add_argument('-i', '--input', required=True, help="Input text file")
+    mod_parser.add_argument('-o', '--output', required=True, help="Output IQ file")
+    mod_parser.add_argument('--binary', action='store_true', help="Use binary format")
+    mod_parser.add_argument('--modulation', default='QAM16', help="Modulation type")
+    mod_parser.add_argument('--subcarriers', type=int, default=2048, help="Number of subcarriers")
+    mod_parser.add_argument('--cp', type=int, help="CP length (default: subcarriers//2)")
+    mod_parser.add_argument('--pilot-spacing', type=int, default=64, help="Pilot spacing")
+
+    # Demod
+    demod_parser = subparsers.add_parser('demodulate', help="Demodulate IQ samples to text")
+    demod_parser.add_argument('-i', '--input', required=True, help="Input IQ file")
+    demod_parser.add_argument('-o', '--output', required=True, help="Output text file")
+    demod_parser.add_argument('--binary', action='store_true', help="Use binary format")
+    demod_parser.add_argument('--modulation', default='QAM16', help="Modulation type")
+    demod_parser.add_argument('--subcarriers', type=int, default=2048, help="Number of subcarriers")
+    demod_parser.add_argument('--cp', type=int, help="CP length (default: subcarriers//2)")
+    demod_parser.add_argument('--pilot-spacing', type=int, default=64, help="Pilot spacing")
+
+    args = parser.parse_args()
+
+    if args.command == 'test':
+        test()
+    elif args.command in ['modulate', 'demodulate']:
+        process_modem(args)
+    else:
+        parser.print_help()
+
+if __name__ == "__main__":
+    main()
