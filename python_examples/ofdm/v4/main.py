@@ -7,10 +7,12 @@ import sys
 import numpy as np
 from scipy.io import savemat, loadmat
 
-# TODO: Проверить подгон по пилотам, формирование пакетов, запись и чтение из файла
+# TODO: В синтетике без шумов не вычисляется оцнка каналов и проблемы с поиском синхры
+# если символ идет с первого индекса буфер, то на нем пик не находится, хотя на графике он отчетливо есть
+#  Проверить подгон по пилотам
 
 class OFDM:
-    def __init__(self, modulation_type='QPSK', num_subcarriers=64, cp_length=16, pilot_spacing=16, pilot_value=1+1j, visualize=True, threshold=0.75):
+    def __init__(self, modulation_type='QPSK', num_subcarriers=64, cp_length=16, pilot_spacing=16, pilot_value=1-1j, visualize=True, threshold=0.75):
         """
         Инициализация OFDM модуляции.
         
@@ -38,6 +40,12 @@ class OFDM:
         if modulation_type == 'QPSK':
             m = 4
             self.modulation = cm.PSKModem(m)
+        elif modulation_type == 'QAM1024':
+            m = 1024
+            self.modulation = cm.QAMModem(m)
+        elif modulation_type == 'QAM256':
+            m = 256
+            self.modulation = cm.QAMModem(m)
         elif modulation_type == 'QAM64':
             m = 64
             self.modulation = cm.QAMModem(m)
@@ -60,10 +68,49 @@ class OFDM:
             positions.append(i)
         return positions
 
-    def generate_ofdm_symbol(self, bits):
-        # Модуляция битов в символы
-        data_symbols = self.modulate_bits(bits)
+    def interleave_bits(self, bits, block_rows=2, block_cols=3):
+        block_size = block_rows * block_cols
+        if len(bits) % block_size != 0:
+            raise ValueError("Длина битов должна быть кратна размеру блока")
         
+        interleaved = []
+        for i in range(0, len(bits), block_size):
+            block = bits[i:i+block_size]
+            # Преобразуем блок в матрицу и читаем по столбцам
+            matrix = np.array(block).reshape(block_rows, block_cols)
+            for col in range(block_cols):
+                interleaved.extend(matrix[:, col].flatten())
+    
+        return np.array(interleaved)
+    
+    def deinterleave_bits(self, bits, block_rows=2, block_cols=3):
+        block_size = block_rows * block_cols
+        if len(bits) % block_size != 0:
+            raise ValueError("Длина битов должна быть кратна размеру блока")
+        
+        deinterleaved = []
+        for i in range(0, len(bits), block_size):
+            block = bits[i:i+block_size]
+            # Транспонируем матрицу для восстановления исходного порядка
+            matrix = np.array(block).reshape(block_cols, block_rows)
+            # Считываем по столбцам исходного блока перемежения
+            for col in range(block_rows):
+                deinterleaved.extend(matrix[:, col].flatten())
+        
+        return np.array(deinterleaved)
+
+    def generate_ofdm_symbol(self, bits):
+        print(len(bits))
+        interleaved_bits = self.interleave_bits(bits, block_rows=2, block_cols=4)
+        max_bits = self.get_max_bits()
+        # print(len(interleaved_bits))    
+        # Дополняем биты до максимального размера повторением
+        if len(interleaved_bits) < max_bits:
+            interleaved_bits = np.resize(interleaved_bits, max_bits)
+        # print(len(interleaved_bits))
+        # Модуляция битов в символы
+        data_symbols = self.modulate_bits(interleaved_bits)
+        # print(len(data_symbols))
         # Создаем массив поднесущих
         subcarriers = np.zeros(self.num_subcarriers, dtype=complex)
         
@@ -88,7 +135,6 @@ class OFDM:
         return ofdm_symbol
 
     def modulate_bits(self, bits):
-        """Модуляция битов с добавлением padding"""
         remainder = len(bits) % self.bits_per_symbol
         if remainder != 0:
             padding = self.bits_per_symbol - remainder
@@ -150,6 +196,14 @@ class OFDM:
         data_subcarriers = self.num_subcarriers - len(self.pilot_positions)
         return data_subcarriers * self.bits_per_symbol
 
+    def find_local_maxima(self, arr, min_distance):
+        maxima = []
+        for i in range(len(arr)):
+            if (i == 0 or arr[i] > arr[i - 1]) and (i == len(arr) - 1 or arr[i] > arr[i + 1]):
+                if not maxima or (i - maxima[-1] >= min_distance):
+                    maxima.append(i)
+        return np.array(maxima)
+
     def sync_correlation(self, received_signal):
         symbol_length = self.num_subcarriers + self.cp_length
         crosscorr = []
@@ -161,18 +215,21 @@ class OFDM:
             if (cp_end <= len(received_signal)) and (main_end <= len(received_signal)):
                 cp_segment = received_signal[cp_start:cp_end]
                 main_segment = received_signal[main_start:main_end]
-                # Нормализация для устойчивости к уровню сигнала
+                # Нормализация
                 cc = np.abs(np.correlate(cp_segment / np.linalg.norm(cp_segment),
                                         main_segment / np.linalg.norm(main_segment)))
                 crosscorr.append(cc[0])
             else:
                 crosscorr.append(0)
         crosscorr = np.array(crosscorr)
+        # print(symbol_length)        
+        # print(self.cp_length // 2)        
+        peaks = self.find_local_maxima(crosscorr, symbol_length)
+
+        # print(peaks)
         
-        # Установка порога для пиков
-        peaks, _ = scipy.signal.find_peaks(crosscorr, 
-                                          height=self.threshold * np.max(crosscorr),  # Используем относительный порог
-                                          distance=symbol_length)
+        threshold_value = self.threshold * np.max(crosscorr)
+        peaks = [p for p in peaks if crosscorr[p] >= threshold_value]
 
         # Это эксперимент 
         valid_peaks = []
@@ -279,6 +336,9 @@ class OFDM:
             
             # Демодуляция после компенсации канала
             demod_bits = self.modulation.demodulate(data_corrected, demod_type='hard').astype(int)
+
+            demod_bits = self.deinterleave_bits(demod_bits, block_rows=2, block_cols=4)
+
             all_demod_bits.extend(demod_bits)
             
             if self.visualize:
@@ -315,7 +375,7 @@ class OFDM:
         
         plt.subplot(2, 1, 2)
         plt.scatter(first_symbol['raw_data'].real, first_symbol['raw_data'].imag, 
-                    label='Исходные данные', s=10, alpha=0.5)
+                    label='Исходные данные', s=40, alpha=0.5)
         plt.scatter(first_symbol['corrected_data'].real, first_symbol['corrected_data'].imag, 
                     label='Исправленные данные', s=10, alpha=0.5)
         plt.title('Данные до и после компенсации канала')
@@ -341,7 +401,6 @@ class OFDM:
         plt.legend()
         plt.show()
     
-
     def _visualize_sync(self, received_signal, crosscorr, valid_peaks, all_peaks=None):
         plt.figure(figsize=(12, 12))
         plt.subplot(2, 1, 1)
@@ -371,18 +430,26 @@ class OFDM:
                 f"CP Length: {self.cp_length}, "
                 f"Pilot Spacing: {self.pilot_spacing})")
     
-def text_to_bits(text):
+# UTF-16
+def text_to_bits(text, encoding='utf-8'):
+    bytes_data = text.encode(encoding)
     bits = []
-    for char in text:
-        bits.extend([int(b) for b in format(ord(char), '08b')])
-    return np.array(bits, dtype=np.uint8)
+    for byte in bytes_data:
+        bits.extend([int(bit) for bit in format(byte, '08b')])
+    return bits
 
-def bits_to_text(bits):
-    chars = []
+def bits_to_text(bits, encoding='utf-8'):
+    if len(bits) % 8 != 0:
+        bits += [0] * (8 - len(bits) % 8)
+    bytes_data = []
     for i in range(0, len(bits), 8):
-        byte = bits[i:i+8]
-        chars.append(chr(int(''.join(map(str, byte)), 2)))
-    return ''.join(chars)
+        byte_bits = bits[i:i+8]
+        byte_str = ''.join(map(str, byte_bits))
+        bytes_data.append(int(byte_str, 2))
+    try:
+        return bytes(bytes_data).decode(encoding)
+    except UnicodeDecodeError:
+        return bytes(bytes_data).decode(encoding, errors='replace')
 
 def read_iq_file(filename, binary=True):
     if binary:
@@ -413,7 +480,8 @@ def process_modem(args):
         num_subcarriers=args.subcarriers,
         cp_length=cp_length,
         pilot_spacing=args.pilot_spacing,
-        visualize=True
+        visualize=True,
+        threshold=0.70
     )
 
     if args.command == 'modulate':
@@ -430,6 +498,19 @@ def process_modem(args):
             count += 1
 
         all_samples = np.concatenate(symbols)
+ 
+        # FIXME: При нормальном использовании НЕ ЗАБЫТЬ УБРАТЬ ЭТУ ЧАСТЬ !!!!!!
+        # noise = (np.random.randn(len(all_samples)) + 1j*np.random.randn(len(all_samples))) * 0.03
+        # noise_start = (np.random.randn(len(all_samples)//2) + 1j * np.random.randn(len(all_samples)//2)) * 0.1
+        # noise_end = (np.random.randn(len(all_samples)//2) + 1j * np.random.randn(len(all_samples)//2)) * 0.1
+
+        # all_samples = all_samples + noise
+
+        # noise_kernel = np.random.normal(loc=0, scale=1, size=2)
+        # all_samples = scipy.signal.convolve(all_samples, noise_kernel, mode='full')
+
+        # all_samples = np.concatenate((noise_start, all_samples, noise_end))
+
         write_iq_file(args.output, all_samples, args.binary)
 
         print(f"{count} OFDM symbols")
@@ -448,7 +529,7 @@ def process_modem(args):
 
 def test():
     modulation_type = 'QAM16'
-    num_subcarriers = 2048
+    num_subcarriers = 64
     cp_length = num_subcarriers // 2
     pilot_spacing = num_subcarriers // 32
     pilot_value = 1 + 1j
@@ -524,7 +605,7 @@ def main():
     mod_parser.add_argument('--modulation', default='QAM16', help="Modulation type")
     mod_parser.add_argument('--subcarriers', type=int, default=2048, help="Number of subcarriers")
     mod_parser.add_argument('--cp', type=int, help="CP length (default: subcarriers//2)")
-    mod_parser.add_argument('--pilot-spacing', type=int, default=64, help="Pilot spacing")
+    mod_parser.add_argument('--pilot-spacing', type=int, default=16, help="Pilot spacing")
 
     # Demod
     demod_parser = subparsers.add_parser('demodulate', help="Demodulate IQ samples to text")
@@ -534,7 +615,7 @@ def main():
     demod_parser.add_argument('--modulation', default='QAM16', help="Modulation type")
     demod_parser.add_argument('--subcarriers', type=int, default=2048, help="Number of subcarriers")
     demod_parser.add_argument('--cp', type=int, help="CP length (default: subcarriers//2)")
-    demod_parser.add_argument('--pilot-spacing', type=int, default=64, help="Pilot spacing")
+    demod_parser.add_argument('--pilot-spacing', type=int, default=16, help="Pilot spacing")
 
     args = parser.parse_args()
 
