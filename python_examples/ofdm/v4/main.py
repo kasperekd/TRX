@@ -99,17 +99,27 @@ class OFDM:
         
         return np.array(deinterleaved)
 
+    def pad_with_random_bits(self, bits, max_bits):
+        if len(bits) < max_bits:
+            random_bits = np.random.randint(0, 2, size=max_bits - len(bits))
+            bits = np.concatenate((bits, random_bits))
+        return bits
+
     def generate_ofdm_symbol(self, bits):
         print(len(bits))
         interleaved_bits = self.interleave_bits(bits, block_rows=2, block_cols=4)
         max_bits = self.get_max_bits()
         # print(len(interleaved_bits))    
-        # Дополняем биты до максимального размера повторением
-        if len(interleaved_bits) < max_bits:
-            interleaved_bits = np.resize(interleaved_bits, max_bits)
+
+        # if len(interleaved_bits) < max_bits:
+        #     interleaved_bits = np.resize(interleaved_bits, max_bits)
+        
+        interleaved_bits = self.pad_with_random_bits(interleaved_bits, max_bits)
+
         # print(len(interleaved_bits))
         # Модуляция битов в символы
         data_symbols = self.modulate_bits(interleaved_bits)
+        # data_symbols *= 1000
         # print(len(data_symbols))
         # Создаем массив поднесущих
         subcarriers = np.zeros(self.num_subcarriers, dtype=complex)
@@ -224,7 +234,7 @@ class OFDM:
         crosscorr = np.array(crosscorr)
         # print(symbol_length)        
         # print(self.cp_length // 2)        
-        peaks = self.find_local_maxima(crosscorr, symbol_length)
+        peaks = self.find_local_maxima(crosscorr, self.cp_length)
 
         # print(peaks)
         
@@ -335,6 +345,7 @@ class OFDM:
             data_corrected = data / H_est[data_indices]
             
             # Демодуляция после компенсации канала
+            # data_corrected /= 1000
             demod_bits = self.modulation.demodulate(data_corrected, demod_type='hard').astype(int)
 
             demod_bits = self.deinterleave_bits(demod_bits, block_rows=2, block_cols=4)
@@ -375,7 +386,7 @@ class OFDM:
         
         plt.subplot(2, 1, 2)
         plt.scatter(first_symbol['raw_data'].real, first_symbol['raw_data'].imag, 
-                    label='Исходные данные', s=40, alpha=0.5)
+                    label='Исходные данные', s=10, alpha=0.5)
         plt.scatter(first_symbol['corrected_data'].real, first_symbol['corrected_data'].imag, 
                     label='Исправленные данные', s=10, alpha=0.5)
         plt.title('Данные до и после компенсации канала')
@@ -481,8 +492,10 @@ def process_modem(args):
         cp_length=cp_length,
         pilot_spacing=args.pilot_spacing,
         visualize=True,
-        threshold=0.70
+        threshold=0.8
     )
+
+    # scale_factor = 1
 
     if args.command == 'modulate':
         with open(args.input, 'r') as f:
@@ -498,19 +511,7 @@ def process_modem(args):
             count += 1
 
         all_samples = np.concatenate(symbols)
- 
-        # FIXME: При нормальном использовании НЕ ЗАБЫТЬ УБРАТЬ ЭТУ ЧАСТЬ !!!!!!
-        # noise = (np.random.randn(len(all_samples)) + 1j*np.random.randn(len(all_samples))) * 0.03
-        # noise_start = (np.random.randn(len(all_samples)//2) + 1j * np.random.randn(len(all_samples)//2)) * 0.1
-        # noise_end = (np.random.randn(len(all_samples)//2) + 1j * np.random.randn(len(all_samples)//2)) * 0.1
-
-        # all_samples = all_samples + noise
-
-        # noise_kernel = np.random.normal(loc=0, scale=1, size=2)
-        # all_samples = scipy.signal.convolve(all_samples, noise_kernel, mode='full')
-
-        # all_samples = np.concatenate((noise_start, all_samples, noise_end))
-
+        # all_samples *= scale_factor
         write_iq_file(args.output, all_samples, args.binary)
 
         print(f"{count} OFDM symbols")
@@ -519,17 +520,18 @@ def process_modem(args):
     elif args.command == 'demodulate':
         samples = read_iq_file(args.input, args.binary)
         # print(samples)
-        
+        # samples /= scale_factor
+
         demod_bits = ofdm.demodulate(samples)
         text = bits_to_text(demod_bits)
-
+        
         with open(args.output, 'w') as f:
             f.write(text)
         print(f"Demodulated to {args.output}")
 
 def test():
-    modulation_type = 'QAM16'
-    num_subcarriers = 64
+    modulation_type = 'QPSK'
+    num_subcarriers = 1024
     cp_length = num_subcarriers // 2
     pilot_spacing = num_subcarriers // 32
     pilot_value = 1 + 1j
@@ -545,7 +547,7 @@ def test():
     max_bits_per_symbol = ofdm.get_max_bits()
     
     # Генерация
-    num_symbols = 3
+    num_symbols = 2
     symbols = []
     all_bits = []
     for _ in range(num_symbols):
@@ -568,7 +570,7 @@ def test():
         received_signal[start_in_buffer:symbol_end] += symbol
         start_in_buffer += symbol_length  # Смещаемся на длину символа
     
-    noise_kernel = np.random.normal(loc=0, scale=1, size=3)
+    noise_kernel = np.random.normal(loc=0, scale=1, size=4)
     received_signal = scipy.signal.convolve(received_signal, noise_kernel, mode='full')
 
     # Демодуляция ВСЕХ символов
@@ -579,7 +581,6 @@ def test():
     correct = np.sum(all_bits == demod_bits[:len(all_bits)]) / len(all_bits)
     print(f"Точность: {correct * 100:.2f}%")
 
-    # Вывод первых 10 бит каждого символа
     for i in range(num_symbols):
         start = i * max_bits_per_symbol
         end = (i+1) * max_bits_per_symbol
